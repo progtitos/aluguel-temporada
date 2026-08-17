@@ -4,8 +4,10 @@ import { useState } from "react";
 import Image from "next/image";
 import { DayPicker, type DateRange } from "react-day-picker";
 import "react-day-picker/style.css";
-import { formatDate, toISODate } from "@/lib/utils";
-import type { Property } from "@/types/database";
+import { ptBR } from "@/lib/dateLocale";
+import { formatBRL, formatDate, toISODate } from "@/lib/utils";
+import { useAdminProperties } from "@/components/AdminPropertiesProvider";
+import type { PricingRule, Property } from "@/types/database";
 
 type BlockedBooking = {
   id: string;
@@ -18,17 +20,25 @@ type BlockedBooking = {
 export default function AdminPropertyEditor({
   property,
   bookings,
+  pricingRules,
 }: {
   property: Property;
   bookings: BlockedBooking[];
+  pricingRules: PricingRule[];
 }) {
+  const { updatePropertyName } = useAdminProperties();
+
   const [form, setForm] = useState({
     name: property.name,
     short_description: property.short_description ?? "",
     description: property.description ?? "",
     house_rules: property.house_rules ?? "",
     address_approx: property.address_approx ?? "",
-    price_per_night: property.price_per_night,
+    address_full: property.address_full ?? "",
+    checkin_time: property.checkin_time,
+    checkout_time: property.checkout_time,
+    preco_semana: property.preco_semana,
+    preco_fds: property.preco_fds,
     cleaning_fee: property.cleaning_fee,
     max_guests: property.max_guests,
     is_active: property.is_active,
@@ -39,9 +49,24 @@ export default function AdminPropertyEditor({
   const [uploading, setUploading] = useState(false);
   const [blockRange, setBlockRange] = useState<DateRange | undefined>();
   const [blockedList, setBlockedList] = useState(bookings);
+  const [rules, setRules] = useState(pricingRules);
+  const [newRule, setNewRule] = useState({
+    name: "",
+    start_date: "",
+    end_date: "",
+    price_per_night: "",
+    min_nights: "1",
+  });
 
   function update<K extends keyof typeof form>(key: K, value: (typeof form)[K]) {
     setForm((f) => ({ ...f, [key]: value }));
+  }
+
+  function handleNameChange(value: string) {
+    update("name", value);
+    // Reflete instantaneamente na sidebar e (via prop já local) no título
+    // desta própria página, sem esperar o clique em "Salvar".
+    updatePropertyName(property.id, value);
   }
 
   async function saveDetails() {
@@ -56,10 +81,12 @@ export default function AdminPropertyEditor({
     setMessage(res.ok ? "Alterações salvas." : "Erro ao salvar.");
   }
 
-  async function uploadPhoto(file: File) {
+  async function uploadPhotos(files: FileList) {
     setUploading(true);
+    setMessage(null);
     const formData = new FormData();
-    formData.append("file", file);
+    Array.from(files).forEach((file) => formData.append("files", file));
+
     const res = await fetch(`/api/admin/properties/${property.id}/photos`, {
       method: "POST",
       body: formData,
@@ -69,7 +96,7 @@ export default function AdminPropertyEditor({
       const data = await res.json();
       setPhotos(data.photos);
     } else {
-      setMessage("Erro ao enviar foto.");
+      setMessage("Erro ao enviar uma ou mais fotos.");
     }
   }
 
@@ -113,6 +140,40 @@ export default function AdminPropertyEditor({
     }
   }
 
+  async function createRule() {
+    if (!newRule.name || !newRule.start_date || !newRule.end_date || !newRule.price_per_night) {
+      setMessage("Preencha todos os campos da regra de feriado.");
+      return;
+    }
+    const res = await fetch("/api/admin/pricing-rules", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        property_id: property.id,
+        name: newRule.name,
+        start_date: newRule.start_date,
+        end_date: newRule.end_date,
+        price_per_night: Number(newRule.price_per_night),
+        min_nights: Number(newRule.min_nights) || 1,
+      }),
+    });
+    if (res.ok) {
+      const data = await res.json();
+      setRules((list) => [...list, data]);
+      setNewRule({ name: "", start_date: "", end_date: "", price_per_night: "", min_nights: "1" });
+    } else {
+      const err = await res.json();
+      setMessage(err.error ?? "Erro ao criar regra de feriado.");
+    }
+  }
+
+  async function removeRule(id: string) {
+    const res = await fetch(`/api/admin/pricing-rules/${id}`, { method: "DELETE" });
+    if (res.ok) {
+      setRules((list) => list.filter((r) => r.id !== id));
+    }
+  }
+
   const disabledDates = blockedList.map((b) => ({
     from: new Date(b.check_in + "T00:00:00"),
     to: new Date(new Date(b.check_out + "T00:00:00").getTime() - 86400000),
@@ -120,12 +181,17 @@ export default function AdminPropertyEditor({
 
   return (
     <div className="max-w-3xl space-y-8">
-      <h1 className="font-display text-2xl font-semibold text-ink">{property.name}</h1>
+      {/* O título usa `form.name` (estado local), então também acompanha
+          a digitação em tempo real nesta mesma página. */}
+      <h1 className="font-display text-2xl font-semibold text-ink">{form.name}</h1>
       {message && <p className="text-sm text-forest-700">{message}</p>}
 
       {/* Fotos */}
       <section className="rounded-xl2 bg-white p-5 shadow-soft ring-1 ring-forest-100">
         <h2 className="font-display text-lg font-semibold text-ink">Fotos</h2>
+        <p className="mt-1 text-sm text-ink/50">
+          Sem limite de quantidade — selecione várias de uma vez.
+        </p>
         <div className="mt-3 flex flex-wrap gap-3">
           {photos.map((url) => (
             <div key={url} className="group relative h-24 w-24 overflow-hidden rounded-lg">
@@ -138,13 +204,14 @@ export default function AdminPropertyEditor({
               </button>
             </div>
           ))}
-          <label className="flex h-24 w-24 cursor-pointer items-center justify-center rounded-lg border-2 border-dashed border-forest-100 text-xs text-ink/50 hover:bg-forest-50">
-            {uploading ? "Enviando..." : "+ Foto"}
+          <label className="flex h-24 w-24 cursor-pointer items-center justify-center rounded-lg border-2 border-dashed border-forest-100 text-center text-xs text-ink/50 hover:bg-forest-50">
+            {uploading ? "Enviando..." : "+ Fotos"}
             <input
               type="file"
               accept="image/*"
+              multiple
               className="hidden"
-              onChange={(e) => e.target.files?.[0] && uploadPhoto(e.target.files[0])}
+              onChange={(e) => e.target.files && e.target.files.length > 0 && uploadPhotos(e.target.files)}
             />
           </label>
         </div>
@@ -159,7 +226,7 @@ export default function AdminPropertyEditor({
             <input
               className="mt-1 w-full rounded-lg border border-forest-100 p-2"
               value={form.name}
-              onChange={(e) => update("name", e.target.value)}
+              onChange={(e) => handleNameChange(e.target.value)}
             />
           </label>
           <label className="text-sm">
@@ -188,8 +255,28 @@ export default function AdminPropertyEditor({
               onChange={(e) => update("house_rules", e.target.value)}
             />
           </label>
-          <label className="text-sm sm:col-span-2">
-            Localização aproximada
+
+          <label className="text-sm">
+            Horário de check-in
+            <input
+              type="time"
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
+              value={form.checkin_time}
+              onChange={(e) => update("checkin_time", e.target.value)}
+            />
+          </label>
+          <label className="text-sm">
+            Horário de check-out
+            <input
+              type="time"
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
+              value={form.checkout_time}
+              onChange={(e) => update("checkout_time", e.target.value)}
+            />
+          </label>
+
+          <label className="text-sm">
+            Localização (label curto, ex: "Praia Grande, SP")
             <input
               className="mt-1 w-full rounded-lg border border-forest-100 p-2"
               value={form.address_approx}
@@ -197,13 +284,33 @@ export default function AdminPropertyEditor({
             />
           </label>
           <label className="text-sm">
-            Preço por diária (R$)
+            Endereço completo
+            <input
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
+              value={form.address_full}
+              onChange={(e) => update("address_full", e.target.value)}
+              placeholder="Rua, número, bairro, cidade - UF, CEP"
+            />
+          </label>
+
+          <label className="text-sm">
+            Preço/diária — Segunda a Quinta (R$)
             <input
               type="number"
               step="0.01"
               className="mt-1 w-full rounded-lg border border-forest-100 p-2"
-              value={form.price_per_night}
-              onChange={(e) => update("price_per_night", Number(e.target.value))}
+              value={form.preco_semana}
+              onChange={(e) => update("preco_semana", Number(e.target.value))}
+            />
+          </label>
+          <label className="text-sm">
+            Preço/diária — Sexta a Domingo (R$)
+            <input
+              type="number"
+              step="0.01"
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
+              value={form.preco_fds}
+              onChange={(e) => update("preco_fds", Number(e.target.value))}
             />
           </label>
           <label className="text-sm">
@@ -243,6 +350,81 @@ export default function AdminPropertyEditor({
         </button>
       </section>
 
+      {/* Regras de feriado / pacotes */}
+      <section className="rounded-xl2 bg-white p-5 shadow-soft ring-1 ring-forest-100">
+        <h2 className="font-display text-lg font-semibold text-ink">
+          Datas comemorativas e pacotes (Natal, Ano Novo, etc.)
+        </h2>
+        <p className="mt-1 text-sm text-ink/50">
+          Enquanto o período estiver dentro do intervalo, o preço da regra
+          substitui a tarifa padrão de semana/fim de semana.
+        </p>
+
+        <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-5">
+          <input
+            className="rounded-lg border border-forest-100 p-2 text-sm sm:col-span-2"
+            placeholder="Nome (ex: Ano Novo)"
+            value={newRule.name}
+            onChange={(e) => setNewRule((r) => ({ ...r, name: e.target.value }))}
+          />
+          <input
+            type="date"
+            className="rounded-lg border border-forest-100 p-2 text-sm"
+            value={newRule.start_date}
+            onChange={(e) => setNewRule((r) => ({ ...r, start_date: e.target.value }))}
+          />
+          <input
+            type="date"
+            className="rounded-lg border border-forest-100 p-2 text-sm"
+            value={newRule.end_date}
+            onChange={(e) => setNewRule((r) => ({ ...r, end_date: e.target.value }))}
+          />
+          <input
+            type="number"
+            step="0.01"
+            className="rounded-lg border border-forest-100 p-2 text-sm"
+            placeholder="R$/noite"
+            value={newRule.price_per_night}
+            onChange={(e) => setNewRule((r) => ({ ...r, price_per_night: e.target.value }))}
+          />
+          <input
+            type="number"
+            min="1"
+            className="rounded-lg border border-forest-100 p-2 text-sm sm:col-span-2"
+            placeholder="Mín. de noites (padrão 1)"
+            value={newRule.min_nights}
+            onChange={(e) => setNewRule((r) => ({ ...r, min_nights: e.target.value }))}
+          />
+          <button
+            onClick={createRule}
+            className="rounded-full bg-amber-500 px-4 py-2 text-sm font-medium text-white sm:col-span-3"
+          >
+            Adicionar regra
+          </button>
+        </div>
+
+        <ul className="mt-4 divide-y divide-forest-100 text-sm">
+          {rules.map((r) => (
+            <li key={r.id} className="flex items-center justify-between py-2">
+              <span>
+                <strong>{r.name}</strong> · {formatDate(r.start_date)} → {formatDate(r.end_date)}{" "}
+                · {formatBRL(Number(r.price_per_night))}/noite
+                {r.min_nights > 1 && ` · mín. ${r.min_nights} noites`}
+              </span>
+              <button
+                onClick={() => removeRule(r.id)}
+                className="text-xs text-red-600 hover:underline"
+              >
+                Remover
+              </button>
+            </li>
+          ))}
+          {rules.length === 0 && (
+            <li className="py-2 text-ink/40">Nenhuma regra cadastrada.</li>
+          )}
+        </ul>
+      </section>
+
       {/* Bloqueio de datas */}
       <section className="rounded-xl2 bg-white p-5 shadow-soft ring-1 ring-forest-100">
         <h2 className="font-display text-lg font-semibold text-ink">
@@ -254,6 +436,7 @@ export default function AdminPropertyEditor({
         <div className="mt-3 overflow-x-auto">
           <DayPicker
             mode="range"
+            locale={ptBR}
             selected={blockRange}
             onSelect={setBlockRange}
             disabled={[{ before: new Date() }, ...disabledDates]}

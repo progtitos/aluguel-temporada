@@ -22,5 +22,17 @@ export default async function AdminPropertyPage({ params }: { params: { id: stri
     .in("status", ["confirmada", "pendente", "bloqueio"])
     .order("check_in", { ascending: true });
 
-  return <AdminPropertyEditor property={property} bookings={bookings ?? []} />;
+  const { data: pricingRules } = await admin
+    .from("pricing_rules")
+    .select("*")
+    .eq("property_id", params.id)
+    .order("start_date", { ascending: true });
+
+  return (
+    <AdminPropertyEditor
+      property={property}
+      bookings={bookings ?? []}
+      pricingRules={pricingRules ?? []}
+    />
+  );
 }

@@ -11,6 +11,19 @@ body {
   color: #211f1a;
 }
 
+@layer base {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
+    font-family: "Avenir Next", Avenir, var(--font-heading), Poppins, sans-serif;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+}
+
 @layer utilities {
   .no-scrollbar::-webkit-scrollbar {
     display: none;

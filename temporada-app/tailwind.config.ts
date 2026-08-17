@@ -23,8 +23,20 @@ const config: Config = {
         },
       },
       fontFamily: {
-        display: ["var(--font-fraunces)", "serif"],
-        sans: ["var(--font-inter)", "sans-serif"],
+        // Avenir é uma fonte licenciada (não distribuível via next/font/google).
+        // Em dispositivos Apple ela já vem instalada no sistema, então é usada
+        // diretamente quando disponível. Como fallback universal, carregamos
+        // "Poppins" via next/font — uma geométrica sans-serif com peso e
+        // proporções muito próximas de Avenir — garantindo consistência
+        // visual em qualquer dispositivo/SO.
+        display: [
+          "Avenir Next",
+          "Avenir",
+          "var(--font-heading)",
+          "Poppins",
+          "sans-serif",
+        ],
+        sans: ["var(--font-body)", "Inter", "sans-serif"],
       },
       borderRadius: {
         xl2: "1.25rem",

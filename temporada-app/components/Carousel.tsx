@@ -2,9 +2,11 @@
 
 import Image from "next/image";
 import { useRef, useState } from "react";
+import PhotoLightbox from "@/components/PhotoLightbox";
 
 export default function Carousel({ photos, alt }: { photos: string[]; alt: string }) {
   const [index, setIndex] = useState(0);
+  const [lightboxOpen, setLightboxOpen] = useState(false);
   const trackRef = useRef<HTMLDivElement>(null);
 
   if (!photos || photos.length === 0) {
@@ -36,7 +38,16 @@ export default function Carousel({ photos, alt }: { photos: string[]; alt: strin
         }}
       >
         {photos.map((src, i) => (
-          <div key={src + i} className="relative h-full w-full shrink-0 snap-start">
+          <button
+            key={src + i}
+            type="button"
+            aria-label={`Ampliar foto ${i + 1} de ${photos.length}`}
+            className="relative h-full w-full shrink-0 snap-start cursor-zoom-in"
+            onClick={() => {
+              setIndex(i);
+              setLightboxOpen(true);
+            }}
+          >
             <Image
               src={src}
               alt={`${alt} - foto ${i + 1}`}
@@ -45,7 +56,7 @@ export default function Carousel({ photos, alt }: { photos: string[]; alt: strin
               sizes="100vw"
               className="object-cover"
             />
-          </div>
+          </button>
         ))}
       </div>
 
@@ -76,6 +87,19 @@ export default function Carousel({ photos, alt }: { photos: string[]; alt: strin
             ))}
           </div>
         </>
+      )}
+
+      {lightboxOpen && (
+        <PhotoLightbox
+          photos={photos}
+          index={index}
+          alt={alt}
+          onClose={() => setLightboxOpen(false)}
+          onNavigate={(next) => {
+            setIndex(next);
+            goTo(next);
+          }}
+        />
       )}
     </div>
   );

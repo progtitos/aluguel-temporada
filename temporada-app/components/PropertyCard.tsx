@@ -33,7 +33,7 @@ export default function PropertyCard({ property }: { property: Property }) {
         </h3>
         <p className="truncate text-sm text-ink/60">{property.short_description}</p>
         <p className="mt-1 text-sm font-medium text-forest-700">
-          {formatBRL(property.price_per_night)}{" "}
+          A partir de {formatBRL(Math.min(property.preco_semana, property.preco_fds))}{" "}
           <span className="font-normal text-ink/50">/ diária</span>
         </p>
       </div>
