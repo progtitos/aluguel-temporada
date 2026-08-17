@@ -3,12 +3,13 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
-import type { Property } from "@/types/database";
+import { useAdminProperties } from "@/components/AdminPropertiesProvider";
 
-export default function AdminSidebar({ properties }: { properties: Property[] }) {
+export default function AdminSidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
+  const { properties } = useAdminProperties();
 
   async function logout() {
     await supabase.auth.signOut();
@@ -17,7 +18,7 @@ export default function AdminSidebar({ properties }: { properties: Property[] })
   }
 
   const linkClass = (active: boolean) =>
-    `block rounded-lg px-3 py-2 text-sm transition ${
+    `block truncate rounded-lg px-3 py-2 text-sm transition ${
       active ? "bg-forest-700 text-white" : "text-ink/70 hover:bg-forest-50"
     }`;
 

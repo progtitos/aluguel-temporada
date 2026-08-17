@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
 import { createCardPreference, createPixPayment } from "@/lib/mercadopago";
+import { calculatePricing } from "@/lib/pricing";
 
 export async function POST(request: Request) {
   const supabase = createClient();
@@ -12,16 +13,29 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "É necessário estar logado." }, { status: 401 });
   }
 
+  // Perfil (nome completo + WhatsApp) é obrigatório antes de qualquer cobrança.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("full_name, whatsapp")
+    .eq("id", user.id)
+    .single();
+
+  if (!profile?.full_name || !profile?.whatsapp) {
+    return NextResponse.json(
+      { error: "Complete seu nome e WhatsApp antes de finalizar a reserva." },
+      { status: 400 }
+    );
+  }
+
   const body = await request.json();
-  const { property_id, check_in, check_out, total_amount, method } = body as {
+  const { property_id, check_in, check_out, method } = body as {
     property_id: string;
     check_in: string;
     check_out: string;
-    total_amount: number;
     method: "pix" | "cartao";
   };
 
-  if (!property_id || !check_in || !check_out || !total_amount) {
+  if (!property_id || !check_in || !check_out) {
     return NextResponse.json({ error: "Dados incompletos." }, { status: 400 });
   }
 
@@ -29,12 +43,34 @@ export async function POST(request: Request) {
 
   const { data: property } = await admin
     .from("properties")
-    .select("name")
+    .select("*")
     .eq("id", property_id)
     .single();
 
   if (!property) {
     return NextResponse.json({ error: "Imóvel não encontrado." }, { status: 404 });
+  }
+
+  const { data: pricingRules } = await admin
+    .from("pricing_rules")
+    .select("*")
+    .eq("property_id", property_id);
+
+  // Preço SEMPRE recalculado a partir das tarifas cadastradas — o valor
+  // enviado pelo client (se algum) é ignorado. Isso evita que alguém
+  // manipule o total via DevTools/API diretamente.
+  const pricing = calculatePricing(property, pricingRules ?? [], check_in, check_out);
+
+  if (pricing.nightsCount < 1) {
+    return NextResponse.json({ error: "Período inválido." }, { status: 400 });
+  }
+  if (pricing.nightsCount < pricing.minNightsRequired) {
+    return NextResponse.json(
+      {
+        error: `Este período exige uma estadia mínima de ${pricing.minNightsRequired} noites.`,
+      },
+      { status: 400 }
+    );
   }
 
   // Cria a reserva como "pendente". O trigger no banco impede overbooking.
@@ -43,11 +79,12 @@ export async function POST(request: Request) {
     .insert({
       property_id,
       guest_id: user.id,
-      guest_name: user.user_metadata?.full_name ?? user.email,
+      guest_name: profile.full_name,
       guest_email: user.email,
+      guest_phone: profile.whatsapp,
       check_in,
       check_out,
-      total_amount,
+      total_amount: pricing.total,
       status: "pendente",
     })
     .select()
@@ -63,7 +100,7 @@ export async function POST(request: Request) {
   try {
     if (method === "pix") {
       const pix = await createPixPayment({
-        amount: total_amount,
+        amount: pricing.total,
         description: `Reserva - ${property.name}`,
         payerEmail: user.email!,
         bookingId: booking.id,
@@ -74,18 +111,19 @@ export async function POST(request: Request) {
         mp_payment_id: String(pix.id),
         method: "pix",
         status: pix.status ?? "pending",
-        amount: total_amount,
+        amount: pricing.total,
       });
 
       return NextResponse.json({
         booking_id: booking.id,
+        total: pricing.total,
         qr_code: pix.qr_code,
         qr_code_base64: pix.qr_code_base64,
       });
     }
 
     const pref = await createCardPreference({
-      amount: total_amount,
+      amount: pricing.total,
       title: `Reserva - ${property.name}`,
       payerEmail: user.email!,
       bookingId: booking.id,
@@ -96,11 +134,15 @@ export async function POST(request: Request) {
       mp_preference_id: pref.id,
       method: "credit_card",
       status: "pending",
-      amount: total_amount,
+      amount: pricing.total,
     });
 
-    return NextResponse.json({ booking_id: booking.id, init_point: pref.init_point });
-  } catch (e) {
+    return NextResponse.json({
+      booking_id: booking.id,
+      total: pricing.total,
+      init_point: pref.init_point,
+    });
+  } catch {
     // Reserva pendente sem pagamento gerado: remove para não travar as datas.
     await admin.from("bookings").delete().eq("id", booking.id);
     return NextResponse.json(

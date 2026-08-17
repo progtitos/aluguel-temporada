@@ -7,22 +7,36 @@ export async function POST(request: Request, { params }: { params: { id: string 
   if (!user) return NextResponse.json({ error: "Não autorizado." }, { status: 401 });
 
   const formData = await request.formData();
-  const file = formData.get("file") as File | null;
-  if (!file) return NextResponse.json({ error: "Arquivo ausente." }, { status: 400 });
+  const files = formData.getAll("files").filter((f): f is File => f instanceof File);
 
-  const admin = createAdminClient();
-  const ext = file.name.split(".").pop();
-  const path = `${params.id}/${crypto.randomUUID()}.${ext}`;
-
-  const { error: uploadError } = await admin.storage
-    .from("property-photos")
-    .upload(path, file, { contentType: file.type, upsert: false });
-
-  if (uploadError) {
-    return NextResponse.json({ error: uploadError.message }, { status: 400 });
+  if (files.length === 0) {
+    return NextResponse.json({ error: "Nenhum arquivo enviado." }, { status: 400 });
   }
 
-  const { data: publicUrl } = admin.storage.from("property-photos").getPublicUrl(path);
+  const admin = createAdminClient();
+  const uploadedUrls: string[] = [];
+
+  for (const file of files) {
+    const ext = file.name.split(".").pop() ?? "jpg";
+    const path = `${params.id}/${crypto.randomUUID()}.${ext}`;
+
+    const { error: uploadError } = await admin.storage
+      .from("property-photos")
+      .upload(path, file, { contentType: file.type, upsert: false });
+
+    if (uploadError) {
+      // Continua tentando enviar as demais fotos; erros pontuais não devem
+      // derrubar o upload inteiro do lote.
+      continue;
+    }
+
+    const { data: publicUrl } = admin.storage.from("property-photos").getPublicUrl(path);
+    uploadedUrls.push(publicUrl.publicUrl);
+  }
+
+  if (uploadedUrls.length === 0) {
+    return NextResponse.json({ error: "Falha ao enviar as fotos." }, { status: 400 });
+  }
 
   const { data: property } = await admin
     .from("properties")
@@ -30,7 +44,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
     .eq("id", params.id)
     .single();
 
-  const photos = [...(property?.photos ?? []), publicUrl.publicUrl];
+  const photos = [...(property?.photos ?? []), ...uploadedUrls];
 
   const { data, error } = await admin
     .from("properties")
