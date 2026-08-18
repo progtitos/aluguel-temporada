@@ -51,7 +51,7 @@ function findRuleForDate(rules: PricingRule[], date: Date): PricingRule | undefi
  * de gerar qualquer cobrança no Mercado Pago.
  */
 export function calculatePricing(
-  property: Pick<Property, "preco_semana" | "preco_fds" | "cleaning_fee">,
+  property: Pick<Property, "preco_semana" | "preco_fds" | "cleaning_fee" | "minimo_noites">,
   pricingRules: PricingRule[],
   checkIn: string,
   checkOut: string
@@ -59,7 +59,9 @@ export function calculatePricing(
   const start = parseISODate(checkIn);
   const end = parseISODate(checkOut);
   const nights: NightBreakdown[] = [];
-  let minNightsRequired = 1;
+  // Piso: o mínimo de noites configurado no cadastro do imóvel. Regras de
+  // feriado podem elevar essa exigência (nunca reduzir) para o período.
+  let minNightsRequired = Math.max(1, Number(property.minimo_noites) || 1);
 
   for (let t = start.getTime(); t < end.getTime(); t += MS_PER_DAY) {
     const current = new Date(t);

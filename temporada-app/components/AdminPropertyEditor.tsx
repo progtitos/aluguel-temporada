@@ -1,10 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useState, type DragEvent, type CSSProperties } from "react";
 import Image from "next/image";
 import { DayPicker, type DateRange } from "react-day-picker";
 import "react-day-picker/style.css";
 import { ptBR } from "@/lib/dateLocale";
+import { slugify } from "@/lib/slug";
 import { formatBRL, formatDate, toISODate } from "@/lib/utils";
 import { useAdminProperties } from "@/components/AdminPropertiesProvider";
 import type { PricingRule, Property } from "@/types/database";
@@ -15,6 +16,15 @@ type BlockedBooking = {
   check_out: string;
   status: string;
   guest_name: string | null;
+};
+
+// Cells do calendário encolhem em telas estreitas (clamp), então a grade de
+// domingo a sábado sempre cabe 100% na largura do card, sem scroll lateral.
+const calendarStyle: CSSProperties = {
+  ["--rdp-day-width" as string]: "clamp(1.9rem, 12vw, 2.75rem)",
+  ["--rdp-day-height" as string]: "clamp(1.9rem, 12vw, 2.75rem)",
+  ["--rdp-day_button-width" as string]: "clamp(1.8rem, 11.5vw, 2.6rem)",
+  ["--rdp-day_button-height" as string]: "clamp(1.8rem, 11.5vw, 2.6rem)",
 };
 
 export default function AdminPropertyEditor({
@@ -30,23 +40,30 @@ export default function AdminPropertyEditor({
 
   const [form, setForm] = useState({
     name: property.name,
+    slug: property.slug,
     short_description: property.short_description ?? "",
     description: property.description ?? "",
     house_rules: property.house_rules ?? "",
     address_approx: property.address_approx ?? "",
     address_full: property.address_full ?? "",
+    latitude: property.latitude,
+    longitude: property.longitude,
     checkin_time: property.checkin_time,
     checkout_time: property.checkout_time,
     preco_semana: property.preco_semana,
     preco_fds: property.preco_fds,
     cleaning_fee: property.cleaning_fee,
+    minimo_noites: property.minimo_noites,
     max_guests: property.max_guests,
     is_active: property.is_active,
   });
   const [photos, setPhotos] = useState<string[]>(property.photos ?? []);
+  const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+  const [savingOrder, setSavingOrder] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [geocoding, setGeocoding] = useState(false);
   const [blockRange, setBlockRange] = useState<DateRange | undefined>();
   const [blockedList, setBlockedList] = useState(bookings);
   const [rules, setRules] = useState(pricingRules);
@@ -64,8 +81,8 @@ export default function AdminPropertyEditor({
 
   function handleNameChange(value: string) {
     update("name", value);
-    // Reflete instantaneamente na sidebar e (via prop já local) no título
-    // desta própria página, sem esperar o clique em "Salvar".
+    // Reflete instantaneamente na sidebar e no título desta própria página,
+    // sem esperar o clique em "Salvar".
     updatePropertyName(property.id, value);
   }
 
@@ -79,6 +96,30 @@ export default function AdminPropertyEditor({
     });
     setSaving(false);
     setMessage(res.ok ? "Alterações salvas." : "Erro ao salvar.");
+  }
+
+  async function handleGeocode() {
+    if (!form.address_full.trim()) {
+      setMessage("Preencha o endereço completo antes de buscar as coordenadas.");
+      return;
+    }
+    setGeocoding(true);
+    setMessage(null);
+    const res = await fetch("/api/admin/geocode", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address: form.address_full }),
+    });
+    setGeocoding(false);
+    if (res.ok) {
+      const data = await res.json();
+      update("latitude", data.lat);
+      update("longitude", data.lon);
+      setMessage(`Coordenadas encontradas: ${data.displayName}`);
+    } else {
+      const err = await res.json();
+      setMessage(err.error ?? "Não foi possível geocodificar o endereço.");
+    }
   }
 
   async function uploadPhotos(files: FileList) {
@@ -112,6 +153,40 @@ export default function AdminPropertyEditor({
     }
   }
 
+  async function persistPhotoOrder(newOrder: string[]) {
+    setSavingOrder(true);
+    const res = await fetch(`/api/admin/properties/${property.id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ photos: newOrder }),
+    });
+    setSavingOrder(false);
+    if (!res.ok) {
+      setMessage("Erro ao salvar a nova ordem das fotos.");
+    }
+  }
+
+  function handleDragStart(index: number) {
+    setDraggedIndex(index);
+  }
+
+  function handleDragOver(e: DragEvent<HTMLDivElement>) {
+    e.preventDefault();
+  }
+
+  function handleDrop(index: number) {
+    if (draggedIndex === null || draggedIndex === index) {
+      setDraggedIndex(null);
+      return;
+    }
+    const reordered = [...photos];
+    const [moved] = reordered.splice(draggedIndex, 1);
+    reordered.splice(index, 0, moved);
+    setPhotos(reordered);
+    setDraggedIndex(null);
+    persistPhotoOrder(reordered);
+  }
+
   async function createBlock() {
     if (!blockRange?.from || !blockRange?.to) return;
     const res = await fetch("/api/admin/bookings", {
@@ -137,6 +212,9 @@ export default function AdminPropertyEditor({
     const res = await fetch(`/api/admin/bookings/${id}`, { method: "DELETE" });
     if (res.ok) {
       setBlockedList((list) => list.filter((b) => b.id !== id));
+    } else {
+      const err = await res.json().catch(() => ({}));
+      setMessage(err.error ?? "Não foi possível remover.");
     }
   }
 
@@ -190,12 +268,33 @@ export default function AdminPropertyEditor({
       <section className="rounded-xl2 bg-white p-5 shadow-soft ring-1 ring-forest-100">
         <h2 className="font-display text-lg font-semibold text-ink">Fotos</h2>
         <p className="mt-1 text-sm text-ink/50">
-          Sem limite de quantidade — selecione várias de uma vez.
+          Sem limite de quantidade — selecione várias de uma vez. Arraste para reordenar; a
+          primeira foto é a capa do anúncio.
+          {savingOrder && <span className="ml-1 text-forest-600">Salvando ordem...</span>}
         </p>
         <div className="mt-3 flex flex-wrap gap-3">
-          {photos.map((url) => (
-            <div key={url} className="group relative h-24 w-24 overflow-hidden rounded-lg">
-              <Image src={url} alt="Foto do imóvel" fill className="object-cover" />
+          {photos.map((url, index) => (
+            <div
+              key={url}
+              draggable
+              onDragStart={() => handleDragStart(index)}
+              onDragOver={handleDragOver}
+              onDrop={() => handleDrop(index)}
+              className={`group relative h-24 w-24 cursor-grab overflow-hidden rounded-lg ring-2 transition active:cursor-grabbing ${
+                draggedIndex === index ? "opacity-40 ring-amber-500" : "ring-transparent"
+              }`}
+            >
+              <Image
+                src={url}
+                alt="Foto do imóvel"
+                fill
+                className="pointer-events-none object-cover"
+              />
+              {index === 0 && (
+                <span className="absolute left-1 top-1 rounded-full bg-forest-700 px-1.5 py-0.5 text-[10px] font-medium text-white">
+                  Capa
+                </span>
+              )}
               <button
                 onClick={() => removePhoto(url)}
                 className="absolute right-1 top-1 rounded-full bg-black/60 px-1.5 text-xs text-white opacity-0 transition group-hover:opacity-100"
@@ -211,7 +310,9 @@ export default function AdminPropertyEditor({
               accept="image/*"
               multiple
               className="hidden"
-              onChange={(e) => e.target.files && e.target.files.length > 0 && uploadPhotos(e.target.files)}
+              onChange={(e) =>
+                e.target.files && e.target.files.length > 0 && uploadPhotos(e.target.files)
+              }
             />
           </label>
         </div>
@@ -229,6 +330,26 @@ export default function AdminPropertyEditor({
               onChange={(e) => handleNameChange(e.target.value)}
             />
           </label>
+          <div className="text-sm">
+            <div className="flex items-center justify-between">
+              <span>URL do anúncio (slug)</span>
+              <button
+                type="button"
+                onClick={() => update("slug", slugify(form.name))}
+                className="text-xs font-medium text-forest-700 hover:underline"
+              >
+                Gerar a partir do nome
+              </button>
+            </div>
+            <input
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2 font-mono text-xs"
+              value={form.slug}
+              onChange={(e) => update("slug", e.target.value)}
+            />
+            <span className="mt-1 block text-xs text-ink/40">
+              /imovel/{form.slug || "..."} — alterar quebra links já compartilhados.
+            </span>
+          </div>
           <label className="text-sm">
             Descrição curta
             <input
@@ -276,6 +397,29 @@ export default function AdminPropertyEditor({
           </label>
 
           <label className="text-sm">
+            Mínimo de noites por reserva
+            <input
+              type="number"
+              min="1"
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
+              value={form.minimo_noites}
+              onChange={(e) => update("minimo_noites", Math.max(1, Number(e.target.value)))}
+            />
+            <span className="mt-1 block text-xs text-ink/40">
+              O hóspede não conseguirá avançar o checkout com menos noites que isso.
+            </span>
+          </label>
+          <label className="text-sm">
+            Hóspedes máximos
+            <input
+              type="number"
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
+              value={form.max_guests}
+              onChange={(e) => update("max_guests", Number(e.target.value))}
+            />
+          </label>
+
+          <label className="text-sm">
             Localização (label curto, ex: "Praia Grande, SP")
             <input
               className="mt-1 w-full rounded-lg border border-forest-100 p-2"
@@ -292,6 +436,42 @@ export default function AdminPropertyEditor({
               placeholder="Rua, número, bairro, cidade - UF, CEP"
             />
           </label>
+
+          <div className="text-sm sm:col-span-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span>Coordenadas exatas (usadas no mapa do anúncio)</span>
+              <button
+                type="button"
+                onClick={handleGeocode}
+                disabled={geocoding}
+                className="rounded-full border border-forest-100 px-3 py-1 text-xs font-medium text-forest-700 hover:bg-forest-50 disabled:opacity-50"
+              >
+                {geocoding ? "Buscando..." : "Buscar coordenadas pelo endereço"}
+              </button>
+            </div>
+            <div className="mt-2 grid grid-cols-2 gap-3">
+              <input
+                type="number"
+                step="0.000001"
+                className="rounded-lg border border-forest-100 p-2"
+                placeholder="Latitude"
+                value={form.latitude ?? ""}
+                onChange={(e) =>
+                  update("latitude", e.target.value === "" ? null : Number(e.target.value))
+                }
+              />
+              <input
+                type="number"
+                step="0.000001"
+                className="rounded-lg border border-forest-100 p-2"
+                placeholder="Longitude"
+                value={form.longitude ?? ""}
+                onChange={(e) =>
+                  update("longitude", e.target.value === "" ? null : Number(e.target.value))
+                }
+              />
+            </div>
+          </div>
 
           <label className="text-sm">
             Preço/diária — Segunda a Quinta (R$)
@@ -323,15 +503,6 @@ export default function AdminPropertyEditor({
               onChange={(e) => update("cleaning_fee", Number(e.target.value))}
             />
           </label>
-          <label className="text-sm">
-            Hóspedes máximos
-            <input
-              type="number"
-              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
-              value={form.max_guests}
-              onChange={(e) => update("max_guests", Number(e.target.value))}
-            />
-          </label>
           <label className="flex items-center gap-2 text-sm">
             <input
               type="checkbox"
@@ -356,8 +527,9 @@ export default function AdminPropertyEditor({
           Datas comemorativas e pacotes (Natal, Ano Novo, etc.)
         </h2>
         <p className="mt-1 text-sm text-ink/50">
-          Enquanto o período estiver dentro do intervalo, o preço da regra
-          substitui a tarifa padrão de semana/fim de semana.
+          Enquanto o período estiver dentro do intervalo, o preço da regra substitui a tarifa
+          padrão de semana/fim de semana. O "mín. de noites" da regra prevalece sobre o mínimo
+          padrão do imóvel quando for maior.
         </p>
 
         <div className="mt-4 grid grid-cols-1 gap-3 sm:grid-cols-5">
@@ -419,9 +591,7 @@ export default function AdminPropertyEditor({
               </button>
             </li>
           ))}
-          {rules.length === 0 && (
-            <li className="py-2 text-ink/40">Nenhuma regra cadastrada.</li>
-          )}
+          {rules.length === 0 && <li className="py-2 text-ink/40">Nenhuma regra cadastrada.</li>}
         </ul>
       </section>
 
@@ -433,13 +603,15 @@ export default function AdminPropertyEditor({
         <p className="mt-1 text-sm text-ink/50">
           Use para reservas feitas fora da plataforma ou manutenção.
         </p>
-        <div className="mt-3 overflow-x-auto">
+        <div className="mt-3 w-full">
           <DayPicker
             mode="range"
             locale={ptBR}
             selected={blockRange}
             onSelect={setBlockRange}
             disabled={[{ before: new Date() }, ...disabledDates]}
+            className="!font-sans w-full"
+            style={calendarStyle}
           />
         </div>
         <button
@@ -450,21 +622,37 @@ export default function AdminPropertyEditor({
           Bloquear período
         </button>
 
+        {/* Reservas de hóspedes (pendentes/confirmadas) aparecem aqui só
+            para referência de disponibilidade — o cancelamento de pendentes
+            agora é feito exclusivamente pela Visão Geral do admin. Apenas
+            bloqueios manuais podem ser removidos diretamente aqui. */}
         <ul className="mt-4 divide-y divide-forest-100 text-sm">
           {blockedList.map((b) => (
             <li key={b.id} className="flex items-center justify-between py-2">
               <span>
                 {formatDate(b.check_in)} → {formatDate(b.check_out)}{" "}
                 <span className="text-ink/40">
-                  ({b.status === "bloqueio" ? "bloqueio manual" : b.status})
+                  (
+                  {b.status === "bloqueio"
+                    ? "bloqueio manual"
+                    : b.status === "pendente"
+                    ? "reserva pendente"
+                    : "reserva confirmada"}
+                  )
                 </span>
               </span>
-              <button
-                onClick={() => removeBlock(b.id)}
-                className="text-xs text-red-600 hover:underline"
-              >
-                Remover
-              </button>
+              {b.status === "bloqueio" ? (
+                <button
+                  onClick={() => removeBlock(b.id)}
+                  className="text-xs text-red-600 hover:underline"
+                >
+                  Remover
+                </button>
+              ) : (
+                <span className="text-xs text-ink/30">
+                  {b.status === "pendente" ? "cancele na Visão geral" : "—"}
+                </span>
+              )}
             </li>
           ))}
           {blockedList.length === 0 && (
