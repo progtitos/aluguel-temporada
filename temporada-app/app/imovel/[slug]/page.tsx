@@ -3,6 +3,7 @@ import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
 import Carousel from "@/components/Carousel";
 import BookingWidget from "@/components/BookingWidget";
+import PropertyMap from "@/components/PropertyMap";
 
 export const revalidate = 0;
 
@@ -72,16 +73,12 @@ export default async function PropertyPage({ params }: { params: { slug: string 
             <p className="mt-2 text-ink/70">
               {property.address_full ?? property.address_approx}
             </p>
-            {property.latitude && property.longitude && (
-              <div className="mt-3 overflow-hidden rounded-xl2 border border-forest-100">
-                <iframe
-                  title="Mapa do imóvel"
-                  className="h-64 w-full"
-                  loading="lazy"
-                  src={`https://www.google.com/maps?q=${property.latitude},${property.longitude}&z=16&output=embed`}
-                />
-              </div>
-            )}
+            <PropertyMap
+              latitude={property.latitude}
+              longitude={property.longitude}
+              addressFull={property.address_full}
+              addressApprox={property.address_approx}
+            />
           </section>
         </div>
 

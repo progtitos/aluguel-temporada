@@ -18,6 +18,11 @@ Custo de infraestrutura: **R$ 0** (todos os planos free tier).
    - `02_rls_policies.sql` (segurança/RLS)
    - `03_storage.sql` (bucket de fotos)
    - `04_seed.sql` (opcional — cria os 3 imóveis de exemplo, que você edita depois pelo `/admin`)
+   - `05_pricing_checkin_and_profiles.sql` (tarifas semana/fds, feriados, perfil do hóspede, check-in/out)
+   - `06_minimo_noites.sql` (estadia mínima configurável por imóvel)
+   - `07_guest_cpf.sql` (CPF do hóspede — exigido pelo Mercado Pago para gerar o Pix)
+
+   ⚠️ **Atenção**: o arquivo `05` **remove a coluna `price_per_night`** (substituída por `preco_semana`/`preco_fds`). Rode os arquivos em ordem, sempre antes de fazer deploy do código correspondente.
 
 ### 1.3 Pegar as chaves de API
 Em **Project Settings → API**, copie:
@@ -77,6 +82,14 @@ Em **Authentication → URL Configuration**:
 ### 4.3 Pix
 Para receber via Pix é necessário que sua conta Mercado Pago tenha o Pix habilitado (normalmente automático para contas brasileiras verificadas).
 
+O Mercado Pago **exige** `payer.first_name`, `payer.last_name` e `payer.identification` (CPF) para gerar a cobrança Pix — por isso o app pede CPF na etapa de perfil antes do checkout (`profiles.cpf`). Sem isso, a API do MP rejeita a criação do pagamento.
+
+---
+
+## 4.4 Geocodificação de endereços (gratuita)
+
+O botão "Buscar coordenadas pelo endereço" no editor de cada imóvel usa a API pública do [Nominatim](https://nominatim.org) (OpenStreetMap) — gratuita, sem chave de API, mantendo a infra 100% free tier. Não é necessário configurar nada: basta o admin preencher o "Endereço completo" e clicar no botão para preencher latitude/longitude automaticamente.
+
 ---
 
 ## 5. Deploy na Vercel
@@ -121,11 +134,12 @@ Qualquer outro e-mail que fizer login será redirecionado de volta para a tela d
 
 ## 8. Fluxo de reserva (resumo técnico)
 
-1. Hóspede escolhe as datas em `/imovel/[slug]` → `BookingWidget`.
-2. Se não estiver logado, faz login social (Google/Apple) e retoma a reserva automaticamente.
-3. Escolhe Pix ou Cartão → `POST /api/bookings` cria a reserva com status `pendente` (o banco impede overbooking via trigger) e gera o pagamento no Mercado Pago.
-4. Mercado Pago notifica `POST /api/mercadopago/webhook` quando o status do pagamento muda.
-5. O webhook consulta o pagamento **diretamente na API do Mercado Pago** (não confia no payload recebido) e só então marca a reserva como `confirmada`.
+1. Hóspede escolhe as datas em `/imovel/[slug]` → `BookingWidget`. O preço é calculado por `lib/pricing.ts` (semana/fim de semana/feriado) e a estadia mínima do imóvel (`minimo_noites`) é validada antes de liberar o avanço.
+2. Se não estiver logado, o app guarda a seleção em `localStorage` e faz login social (Google/Apple) com `redirectTo=/auth/callback?next=/imovel/[slug]` — o hóspede retorna exatamente para a página do imóvel, com as datas restauradas automaticamente (sem cair na Home).
+3. Antes do pagamento, é obrigatório preencher **nome completo, WhatsApp e CPF** (gravados em `profiles` e também copiados para a `booking` correspondente). O CPF é exigido pelo Mercado Pago para gerar o Pix.
+4. Escolhe Pix ou Cartão → `POST /api/bookings` recalcula o preço no servidor (nunca confia no valor do client), cria a reserva com status `pendente` (o banco impede overbooking via trigger) e gera o pagamento no Mercado Pago.
+5. Mercado Pago notifica `POST /api/mercadopago/webhook` quando o status do pagamento muda.
+6. O webhook consulta o pagamento **diretamente na API do Mercado Pago** (não confia no payload recebido) e só então marca a reserva como `confirmada`.
 
 ---
 

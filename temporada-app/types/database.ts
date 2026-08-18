@@ -18,6 +18,7 @@ export type Property = {
   preco_semana: number;
   preco_fds: number;
   cleaning_fee: number;
+  minimo_noites: number;
   checkin_time: string;
   checkout_time: string;
   max_guests: number;
@@ -44,6 +45,7 @@ export type Booking = {
   guest_name: string | null;
   guest_email: string | null;
   guest_phone: string | null;
+  guest_cpf: string | null;
   check_in: string;
   check_out: string;
   total_amount: number;
@@ -67,6 +69,7 @@ export type Profile = {
   id: string;
   full_name: string | null;
   whatsapp: string | null;
+  cpf: string | null;
   created_at: string;
   updated_at: string;
 };

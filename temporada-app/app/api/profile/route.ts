@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { isValidBrazilianPhone, unmaskDigits } from "@/lib/phoneMask";
+import { isValidCPF, unmaskCPFDigits } from "@/lib/cpfMask";
 
 export async function GET() {
   const supabase = createClient();
@@ -22,13 +23,16 @@ export async function POST(request: Request) {
 
   if (!user) return NextResponse.json({ error: "Não autenticado." }, { status: 401 });
 
-  const { full_name, whatsapp } = await request.json();
+  const { full_name, whatsapp, cpf } = await request.json();
 
   if (!full_name || String(full_name).trim().length < 3) {
     return NextResponse.json({ error: "Informe o nome completo." }, { status: 400 });
   }
   if (!whatsapp || !isValidBrazilianPhone(whatsapp)) {
     return NextResponse.json({ error: "Informe um WhatsApp válido." }, { status: 400 });
+  }
+  if (!cpf || !isValidCPF(cpf)) {
+    return NextResponse.json({ error: "Informe um CPF válido." }, { status: 400 });
   }
 
   const { data, error } = await supabase
@@ -37,6 +41,7 @@ export async function POST(request: Request) {
       id: user.id,
       full_name: String(full_name).trim(),
       whatsapp: unmaskDigits(whatsapp),
+      cpf: unmaskCPFDigits(cpf),
       updated_at: new Date().toISOString(),
     })
     .select()

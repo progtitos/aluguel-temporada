@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { createClient, createAdminClient } from "@/lib/supabase/server";
-import { createCardPreference, createPixPayment } from "@/lib/mercadopago";
+import { createCardPreference, createPixPayment, MercadoPagoRequestError } from "@/lib/mercadopago";
 import { calculatePricing } from "@/lib/pricing";
+import { splitFullName } from "@/lib/utils";
 
 export async function POST(request: Request) {
   const supabase = createClient();
@@ -13,16 +14,17 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "É necessário estar logado." }, { status: 401 });
   }
 
-  // Perfil (nome completo + WhatsApp) é obrigatório antes de qualquer cobrança.
+  // Perfil (nome completo + WhatsApp + CPF) é obrigatório antes de qualquer
+  // cobrança. O CPF é exigido pelo Mercado Pago para gerar o Pix.
   const { data: profile } = await supabase
     .from("profiles")
-    .select("full_name, whatsapp")
+    .select("full_name, whatsapp, cpf")
     .eq("id", user.id)
     .single();
 
-  if (!profile?.full_name || !profile?.whatsapp) {
+  if (!profile?.full_name || !profile?.whatsapp || !profile?.cpf) {
     return NextResponse.json(
-      { error: "Complete seu nome e WhatsApp antes de finalizar a reserva." },
+      { error: "Complete seu nome, WhatsApp e CPF antes de finalizar a reserva." },
       { status: 400 }
     );
   }
@@ -82,6 +84,7 @@ export async function POST(request: Request) {
       guest_name: profile.full_name,
       guest_email: user.email,
       guest_phone: profile.whatsapp,
+      guest_cpf: profile.cpf,
       check_in,
       check_out,
       total_amount: pricing.total,
@@ -99,10 +102,15 @@ export async function POST(request: Request) {
 
   try {
     if (method === "pix") {
+      const { firstName, lastName } = splitFullName(profile.full_name);
+
       const pix = await createPixPayment({
         amount: pricing.total,
         description: `Reserva - ${property.name}`,
         payerEmail: user.email!,
+        payerFirstName: firstName,
+        payerLastName: lastName,
+        payerCpf: profile.cpf,
         bookingId: booking.id,
       });
 
@@ -142,12 +150,19 @@ export async function POST(request: Request) {
       total: pricing.total,
       init_point: pref.init_point,
     });
-  } catch {
+  } catch (error) {
     // Reserva pendente sem pagamento gerado: remove para não travar as datas.
     await admin.from("bookings").delete().eq("id", booking.id);
-    return NextResponse.json(
-      { error: "Erro ao gerar pagamento no Mercado Pago." },
-      { status: 500 }
-    );
+
+    // Propaga a mensagem real do Mercado Pago (ex.: campo inválido/faltando)
+    // em vez de um erro genérico — essencial para diagnosticar problemas
+    // como o do Pix, que falhava silenciosamente antes desta correção.
+    const message =
+      error instanceof MercadoPagoRequestError
+        ? error.message
+        : "Erro ao gerar pagamento no Mercado Pago.";
+
+    console.error("Falha ao gerar pagamento:", error);
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

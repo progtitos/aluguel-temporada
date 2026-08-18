@@ -1,23 +1,43 @@
 import { createAdminClient } from "@/lib/supabase/server";
-import { formatBRL, formatDate } from "@/lib/utils";
+import { formatBRL } from "@/lib/utils";
+import AdminBookingsTable, { type BookingRow } from "@/components/AdminBookingsTable";
 
 export const revalidate = 0;
 
 export default async function AdminDashboard() {
   const admin = createAdminClient();
 
-  const { data: bookings } = await admin
-    .from("bookings")
-    .select("*, properties(name)")
-    .neq("status", "bloqueio")
-    .order("created_at", { ascending: false });
+  // Duas consultas simples em vez de um join embutido (`properties(name)`):
+  // nosso `Database` tipado usa `Relationships: []` (sem metadados de FK),
+  // então o supabase-js não consegue inferir o formato do recurso
+  // aninhado e a linha inteira vira `never`. Buscar e juntar em memória
+  // evita esse problema sem precisar de `as any`.
+  const [{ data: bookingsData }, { data: propertiesData }] = await Promise.all([
+    admin
+      .from("bookings")
+      .select("id, property_id, check_in, check_out, total_amount, status, guest_name, guest_email, guest_phone")
+      .neq("status", "bloqueio")
+      .order("created_at", { ascending: false }),
+    admin.from("properties").select("id, name"),
+  ]);
 
-  const confirmadas = bookings?.filter((b: any) => b.status === "confirmada") ?? [];
-  const pendentes = bookings?.filter((b: any) => b.status === "pendente") ?? [];
-  const faturamentoTotal = confirmadas.reduce(
-    (sum: number, b: any) => sum + Number(b.total_amount),
-    0
-  );
+  const propertyNameById = new Map((propertiesData ?? []).map((p) => [p.id, p.name]));
+
+  const bookings: BookingRow[] = (bookingsData ?? []).map((b) => ({
+    id: b.id,
+    property_name: propertyNameById.get(b.property_id) ?? "—",
+    guest_name: b.guest_name,
+    guest_email: b.guest_email,
+    guest_phone: b.guest_phone,
+    check_in: b.check_in,
+    check_out: b.check_out,
+    total_amount: Number(b.total_amount),
+    status: b.status,
+  }));
+
+  const confirmadas = bookings.filter((b) => b.status === "confirmada");
+  const pendentes = bookings.filter((b) => b.status === "pendente");
+  const faturamentoTotal = confirmadas.reduce((sum, b) => sum + b.total_amount, 0);
 
   return (
     <div>
@@ -47,51 +67,7 @@ export default async function AdminDashboard() {
       <h2 className="mb-3 mt-8 font-display text-lg font-semibold text-ink">
         Últimas reservas
       </h2>
-      <div className="overflow-x-auto rounded-xl2 bg-white shadow-soft ring-1 ring-forest-100">
-        <table className="w-full text-left text-sm">
-          <thead className="bg-forest-50 text-ink/50">
-            <tr>
-              <th className="px-4 py-3">Imóvel</th>
-              <th className="px-4 py-3">Hóspede</th>
-              <th className="px-4 py-3">Datas</th>
-              <th className="px-4 py-3">Valor</th>
-              <th className="px-4 py-3">Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {bookings?.map((b: any) => (
-              <tr key={b.id} className="border-t border-forest-100">
-                <td className="px-4 py-3">{b.properties?.name}</td>
-                <td className="px-4 py-3">{b.guest_name ?? b.guest_email}</td>
-                <td className="px-4 py-3">
-                  {formatDate(b.check_in)} → {formatDate(b.check_out)}
-                </td>
-                <td className="px-4 py-3">{formatBRL(Number(b.total_amount))}</td>
-                <td className="px-4 py-3">
-                  <span
-                    className={`rounded-full px-2 py-1 text-xs font-medium ${
-                      b.status === "confirmada"
-                        ? "bg-forest-100 text-forest-700"
-                        : b.status === "pendente"
-                        ? "bg-amber-200 text-amber-600"
-                        : "bg-red-100 text-red-600"
-                    }`}
-                  >
-                    {b.status}
-                  </span>
-                </td>
-              </tr>
-            ))}
-            {(!bookings || bookings.length === 0) && (
-              <tr>
-                <td colSpan={5} className="px-4 py-6 text-center text-ink/40">
-                  Nenhuma reserva ainda.
-                </td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+      <AdminBookingsTable bookings={bookings} />
     </div>
   );
 }

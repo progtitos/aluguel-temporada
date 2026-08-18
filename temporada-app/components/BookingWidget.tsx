@@ -1,18 +1,33 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { DayPicker, type DateRange } from "react-day-picker";
 import "react-day-picker/style.css";
 import { ptBR } from "@/lib/dateLocale";
 import { createClient } from "@/lib/supabase/client";
 import { calculatePricing, rateSourceLabel } from "@/lib/pricing";
 import { maskWhatsApp, isValidBrazilianPhone } from "@/lib/phoneMask";
+import { maskCPF, isValidCPF } from "@/lib/cpfMask";
 import { formatBRL, formatDate, toISODate } from "@/lib/utils";
 import type { PricingRule, Property } from "@/types/database";
 import LoginButtons from "@/components/LoginButtons";
 
 type Blocked = { check_in: string; check_out: string };
 type Step = "datas" | "login" | "perfil" | "pagamento";
+
+// Chave usada no localStorage (sobrevive ao redirect do OAuth, diferente
+// de sessionStorage em alguns webviews/navegadores de app que abrem o
+// fluxo de login em contexto isolado).
+const PENDING_BOOKING_KEY = "temporada_pending_booking";
+
+// Cells do calendário encolhem em telas estreitas (clamp), então a grade de
+// domingo a sábado sempre cabe 100% na largura do card, sem scroll lateral.
+const calendarStyle: CSSProperties = {
+  ["--rdp-day-width" as string]: "clamp(1.9rem, 12vw, 2.75rem)",
+  ["--rdp-day-height" as string]: "clamp(1.9rem, 12vw, 2.75rem)",
+  ["--rdp-day_button-width" as string]: "clamp(1.8rem, 11.5vw, 2.6rem)",
+  ["--rdp-day_button-height" as string]: "clamp(1.8rem, 11.5vw, 2.6rem)",
+};
 
 export default function BookingWidget({
   property,
@@ -35,6 +50,7 @@ export default function BookingWidget({
 
   const [fullName, setFullName] = useState("");
   const [whatsapp, setWhatsapp] = useState("");
+  const [cpf, setCpf] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
 
   const disabledDates = useMemo(
@@ -51,9 +67,13 @@ export default function BookingWidget({
     return calculatePricing(property, pricingRules, toISODate(range.from), toISODate(range.to));
   }, [range, property, pricingRules]);
 
-  // Retoma uma reserva iniciada antes do login social (ver LoginButtons)
+  // Retoma uma reserva iniciada antes do login social (ver LoginButtons).
+  // Como o callback do OAuth agora retorna para ESTA mesma página
+  // (?next=/imovel/[slug]), este efeito roda assim que o usuário volta
+  // logado, restaura as datas escolhidas e segue direto para o próximo
+  // passo — corrigindo o bug em que a seleção se perdia ao cair na Home.
   useEffect(() => {
-    const raw = sessionStorage.getItem("pending_booking");
+    const raw = localStorage.getItem(PENDING_BOOKING_KEY);
     if (!raw) return;
     try {
       const pending = JSON.parse(raw);
@@ -66,11 +86,11 @@ export default function BookingWidget({
           from: new Date(pending.check_in + "T00:00:00"),
           to: new Date(pending.check_out + "T00:00:00"),
         });
-        sessionStorage.removeItem("pending_booking");
+        localStorage.removeItem(PENDING_BOOKING_KEY);
         goToProfileOrPayment();
       });
     } catch {
-      sessionStorage.removeItem("pending_booking");
+      localStorage.removeItem(PENDING_BOOKING_KEY);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -79,13 +99,16 @@ export default function BookingWidget({
     const res = await fetch("/api/profile");
     if (res.ok) {
       const profile = await res.json();
-      if (profile?.full_name && profile?.whatsapp) {
+      if (profile?.full_name && profile?.whatsapp && profile?.cpf) {
         setFullName(profile.full_name);
         setWhatsapp(maskWhatsApp(profile.whatsapp));
+        setCpf(maskCPF(profile.cpf));
         setStep("pagamento");
         return;
       }
       if (profile?.full_name) setFullName(profile.full_name);
+      if (profile?.whatsapp) setWhatsapp(maskWhatsApp(profile.whatsapp));
+      if (profile?.cpf) setCpf(maskCPF(profile.cpf));
     }
     setStep("perfil");
   }
@@ -109,8 +132,8 @@ export default function BookingWidget({
     } = await supabase.auth.getUser();
 
     if (!user) {
-      sessionStorage.setItem(
-        "pending_booking",
+      localStorage.setItem(
+        PENDING_BOOKING_KEY,
         JSON.stringify({
           property_id: property.id,
           check_in: toISODate(range.from),
@@ -134,12 +157,16 @@ export default function BookingWidget({
       setError("Informe um número de WhatsApp válido, com DDD.");
       return;
     }
+    if (!isValidCPF(cpf)) {
+      setError("Informe um CPF válido (necessário para gerar o Pix).");
+      return;
+    }
 
     setSavingProfile(true);
     const res = await fetch("/api/profile", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ full_name: fullName.trim(), whatsapp }),
+      body: JSON.stringify({ full_name: fullName.trim(), whatsapp, cpf }),
     });
     setSavingProfile(false);
 
@@ -193,10 +220,15 @@ export default function BookingWidget({
       <p className="text-sm text-ink/50">
         {formatBRL(property.preco_fds)} / diária (sexta a domingo)
       </p>
+      {property.minimo_noites > 1 && (
+        <p className="mt-1 text-xs text-amber-600">
+          Estadia mínima: {property.minimo_noites} noites
+        </p>
+      )}
 
       {step === "datas" && (
         <>
-          <div className="mt-4 overflow-x-auto">
+          <div className="mt-4 w-full">
             <DayPicker
               mode="range"
               locale={ptBR}
@@ -204,7 +236,8 @@ export default function BookingWidget({
               onSelect={setRange}
               disabled={[{ before: new Date() }, ...disabledDates]}
               numberOfMonths={1}
-              className="!font-sans"
+              className="!font-sans w-full"
+              style={calendarStyle}
             />
           </div>
 
@@ -235,6 +268,12 @@ export default function BookingWidget({
                 <span>Total</span>
                 <span>{formatBRL(pricing.total)}</span>
               </div>
+              {pricing.nightsCount < pricing.minNightsRequired && (
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                  Este período exige uma estadia mínima de {pricing.minNightsRequired} noites.
+                  Selecione um intervalo maior para continuar.
+                </p>
+              )}
             </div>
           )}
 
@@ -253,8 +292,9 @@ export default function BookingWidget({
         <div className="mt-4 space-y-3">
           <p className="text-sm text-ink/70">
             Entre com sua conta para concluir a reserva de {pricing?.nightsCount ?? ""} noites.
+            Você voltará direto para esta página depois do login.
           </p>
-          <LoginButtons redirectTo="/auth/callback" />
+          <LoginButtons redirectTo={`/auth/callback?next=/imovel/${property.slug}`} />
           <button
             onClick={() => setStep("datas")}
             className="w-full text-center text-xs text-ink/50 underline"
@@ -267,7 +307,8 @@ export default function BookingWidget({
       {step === "perfil" && (
         <div className="mt-4 space-y-3">
           <p className="text-sm text-ink/70">
-            Para confirmarmos sua reserva, precisamos do seu nome completo e WhatsApp.
+            Para confirmarmos sua reserva e gerar o pagamento, precisamos do seu nome completo,
+            WhatsApp e CPF (exigido pelo Mercado Pago para o Pix).
           </p>
           <label className="block text-sm">
             Nome completo
@@ -286,6 +327,16 @@ export default function BookingWidget({
               onChange={(e) => setWhatsapp(maskWhatsApp(e.target.value))}
               placeholder="(11) 99999-9999"
               inputMode="tel"
+            />
+          </label>
+          <label className="block text-sm">
+            CPF
+            <input
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
+              value={cpf}
+              onChange={(e) => setCpf(maskCPF(e.target.value))}
+              placeholder="000.000.000-00"
+              inputMode="numeric"
             />
           </label>
 
