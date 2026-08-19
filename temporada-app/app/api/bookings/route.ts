@@ -119,59 +119,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    if (method === "pix") {
-      const nameParts = cleanName.split(/\s+/);
-      const firstName = nameParts[0] || "Hospede";
-      const lastName = nameParts.slice(1).join(" ") || "Cliente";
-
-      // Chamada direta via fetch com o token configurado
-      const mpResponse = await fetch("https://api.mercadopago.com/v1/payments", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
-        },
-        body: JSON.stringify({
-          transaction_amount: Number(pricing.total.toFixed(2)),
-          description: `Reserva - ${property.name}`,
-          payment_method_id: "pix",
-          external_reference: booking.id,
-          payer: {
-            email: cleanEmail,
-            first_name: firstName,
-            last_name: lastName,
-            identification: {
-              type: "CPF",
-              number: cleanCpf,
-            },
-          },
-        }),
-      });
-
-      const mpData = await mpResponse.json();
-
-      if (!mpResponse.ok) {
-        throw new Error(mpData.message || "Erro no Mercado Pago");
-      }
-
-      const pixInfo = mpData.point_of_interaction?.transaction_data;
-
-      await admin.from("payments").insert({
-        booking_id: booking.id,
-        mp_payment_id: String(mpData.id),
-        method: "pix",
-        status: mpData.status ?? "pending",
-        amount: pricing.total,
-      });
-
-      return NextResponse.json({
-        booking_id: booking.id,
-        total: pricing.total,
-        qr_code: pixInfo?.qr_code,
-        qr_code_base64: pixInfo?.qr_code_base64,
-      });
-    }
-
+    // Redireciona via Checkout Pro para evitar a trava de política da API transparente
     const pref = await createCardPreference({
       amount: pricing.total,
       title: `Reserva - ${property.name}`,
@@ -182,7 +130,7 @@ export async function POST(request: Request) {
     await admin.from("payments").insert({
       booking_id: booking.id,
       mp_preference_id: pref.id,
-      method: "credit_card",
+      method: method === "pix" ? "pix" : "credit_card",
       status: "pending",
       amount: pricing.total,
     });
