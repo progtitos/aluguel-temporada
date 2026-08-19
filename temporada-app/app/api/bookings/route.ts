@@ -16,7 +16,7 @@ export async function POST(request: Request) {
       cpf,
     } = body;
 
-    // 1. Sanitização dos dados (somente números no CPF e WhatsApp)
+    // 1. Sanitização
     const cleanCpf = cpf ? String(cpf).replace(/\D/g, "") : "";
     const cleanPhone = whatsapp ? String(whatsapp).replace(/\D/g, "") : "";
     const cleanEmail = email ? String(email).trim() : "";
@@ -24,14 +24,14 @@ export async function POST(request: Request) {
 
     if (!property_id || !check_in || !check_out || !cleanCpf || !cleanEmail) {
       return NextResponse.json(
-        { error: "Dados incompletos para processar a reserva." },
+        { error: "Campos obrigatórios ausentes." },
         { status: 400 }
       );
     }
 
     const supabase = createClient();
 
-    // 2. Buscar detalhes do imóvel
+    // 2. Buscar imóvel
     const { data: property, error: propertyError } = await supabase
       .from("properties")
       .select("*")
@@ -40,41 +40,43 @@ export async function POST(request: Request) {
 
     if (propertyError || !property) {
       return NextResponse.json(
-        { error: "Imóvel não encontrado." },
+        { error: `Imóvel não encontrado: ${propertyError?.message || ''}` },
         { status: 404 }
       );
     }
 
-    // Calcular total com base no preço cadastrado no imóvel
     const propPrice = (property as any).price_per_day || (property as any).price || (property as any).price_per_night || 0;
 
-    // 3. Inserção mapeando os nomes exatos das colunas da sua tabela 'bookings'
+    // 3. Montar payload com fallback de nomes de colunas
+    const insertData: Record<string, any> = {
+      property_id,
+      check_in,
+      check_out,
+      guest_name: cleanName,
+      guest_email: cleanEmail,
+      guest_phone: cleanPhone,
+      guest_cpf: cleanCpf,
+      status: "pendente",
+      payment_method: method,
+      total_amount: propPrice,
+    };
+
     const { data: booking, error: bookingError } = await supabase
       .from("bookings")
-      .insert({
-        property_id,
-        check_in,
-        check_out,
-        guest_name: cleanName,
-        guest_email: cleanEmail,
-        guest_phone: cleanPhone,
-        guest_cpf: cleanCpf,
-        status: "pendente",
-        payment_method: method,
-        total_amount: propPrice,
-      } as any)
+      .insert(insertData as any)
       .select()
       .single();
 
-    if (bookingError || !booking) {
-      console.error("Erro no insert do Supabase:", bookingError);
+    // Se falhar no Supabase, exibe a mensagem EXATA do erro do banco na tela
+    if (bookingError) {
+      console.error("Erro no Supabase:", bookingError);
       return NextResponse.json(
-        { error: "Erro ao registrar reserva no banco de dados." },
+        { error: `Banco de Dados: ${bookingError.message} (${bookingError.code})` },
         { status: 500 }
       );
     }
 
-    // 4. Integração Pix via Mercado Pago SDK
+    // 4. Mercado Pago Pix
     if (method === "pix") {
       const nameParts = cleanName.split(" ");
       const firstName = nameParts[0];
@@ -112,9 +114,9 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ success: true, booking_id: booking.id });
   } catch (error: any) {
-    console.error("Erro na API de reservas:", error);
+    console.error("Erro na API:", error);
     return NextResponse.json(
-      { error: error.message || "Erro interno no servidor." },
+      { error: `Erro Servidor: ${error.message}` },
       { status: 500 }
     );
   }
