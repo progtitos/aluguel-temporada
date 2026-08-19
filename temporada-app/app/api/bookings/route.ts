@@ -47,7 +47,7 @@ export async function POST(request: Request) {
 
     const propPrice = (property as any).price_per_day || (property as any).price || (property as any).price_per_night || 0;
 
-    // 3. Montar payload com fallback de nomes de colunas
+    // 3. Objeto de inserção com colunas válidas no Supabase
     const insertData: Record<string, any> = {
       property_id,
       check_in,
@@ -57,7 +57,6 @@ export async function POST(request: Request) {
       guest_phone: cleanPhone,
       guest_cpf: cleanCpf,
       status: "pendente",
-      payment_method: method,
       total_amount: propPrice,
     };
 
@@ -67,7 +66,6 @@ export async function POST(request: Request) {
       .select()
       .single();
 
-    // Se falhar no Supabase, exibe a mensagem EXATA do erro do banco na tela
     if (bookingError) {
       console.error("Erro no Supabase:", bookingError);
       return NextResponse.json(
@@ -76,7 +74,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 4. Mercado Pago Pix
+    // 4. Integração Mercado Pago Pix
     if (method === "pix") {
       const nameParts = cleanName.split(" ");
       const firstName = nameParts[0];
