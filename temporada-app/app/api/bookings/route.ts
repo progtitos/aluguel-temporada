@@ -45,7 +45,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Inserção com cast seguro para o tipo esperado pelo Supabase Client
+    // 3. Inserção com cast seguro no Supabase Client
     const { data: booking, error: bookingError } = await supabase
       .from("bookings")
       .insert({
@@ -76,9 +76,12 @@ export async function POST(request: Request) {
       const firstName = nameParts[0];
       const lastName = nameParts.slice(1).join(" ") || "Hospede";
 
+      // Uso do campo correto do banco: booking.total_amount
+      const transactionAmount = Number((booking as any).total_amount || (booking as any).total_price || property.price_per_night);
+
       const paymentResponse = await mpPayment.create({
         body: {
-          transaction_amount: Number(booking.total_price || property.price_per_night),
+          transaction_amount: transactionAmount,
           description: `Reserva: ${property.title}`,
           payment_method_id: "pix",
           payer: {
@@ -100,7 +103,7 @@ export async function POST(request: Request) {
         booking_id: booking.id,
         qr_code: pixData?.qr_code,
         qr_code_base64: pixData?.qr_code_base64,
-        total: booking.total_price || property.price_per_night,
+        total: transactionAmount,
       });
     }
 
