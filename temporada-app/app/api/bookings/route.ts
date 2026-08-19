@@ -17,9 +17,10 @@ export async function POST(request: Request) {
     } = body;
 
     // 1. Sanitização dos dados (somente números no CPF e WhatsApp)
-    const cleanCpf = cpf ? cpf.replace(/\D/g, "") : "";
-    const cleanPhone = whatsapp ? whatsapp.replace(/\D/g, "") : "";
-    const cleanEmail = email ? email.trim() : "";
+    const cleanCpf = cpf ? String(cpf).replace(/\D/g, "") : "";
+    const cleanPhone = whatsapp ? String(whatsapp).replace(/\D/g, "") : "";
+    const cleanEmail = email ? String(email).trim() : "";
+    const cleanName = full_name ? String(full_name).trim() : "";
 
     if (!property_id || !check_in || !check_out || !cleanCpf || !cleanEmail) {
       return NextResponse.json(
@@ -44,24 +45,27 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Criar registro da reserva no banco Supabase
+    // 3. Montar objeto da reserva com tipagem solta para o Supabase insert
+    const bookingPayload: Record<string, any> = {
+      property_id,
+      check_in,
+      check_out,
+      full_name: cleanName,
+      email: cleanEmail,
+      whatsapp: cleanPhone,
+      cpf: cleanCpf,
+      status: "pendente",
+      payment_method: method,
+    };
+
     const { data: booking, error: bookingError } = await supabase
       .from("bookings")
-      .insert({
-        property_id,
-        check_in,
-        check_out,
-        full_name: full_name.trim(),
-        email: cleanEmail,
-        whatsapp: cleanPhone,
-        cpf: cleanCpf,
-        status: "pendente",
-        payment_method: method,
-      })
+      .insert([bookingPayload])
       .select()
       .single();
 
     if (bookingError || !booking) {
+      console.error("Erro no insert do Supabase:", bookingError);
       return NextResponse.json(
         { error: "Erro ao registrar reserva no banco de dados." },
         { status: 500 }
@@ -70,7 +74,7 @@ export async function POST(request: Request) {
 
     // 4. Integração Pix via Mercado Pago SDK
     if (method === "pix") {
-      const nameParts = full_name.trim().split(" ");
+      const nameParts = cleanName.split(" ");
       const firstName = nameParts[0];
       const lastName = nameParts.slice(1).join(" ") || "Hospede";
 
