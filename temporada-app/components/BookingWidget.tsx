@@ -5,25 +5,38 @@ import { format, differenceInDays } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { DayPicker, DateRange } from "react-day-picker";
 import "react-day-picker/dist/style.css";
-import { Property } from "@/types/database";
-import { maskCPF, maskPhone, isValidCPF, isValidPhone } from "@/lib/phoneMask";
+import { Property, PricingRule } from "@/types/database";
+import { maskPhone, isValidPhone } from "@/lib/phoneMask";
+import { maskCPF, isValidCPF } from "@/lib/cpfMask";
+
+interface BlockedRange {
+  start: Date;
+  end: Date;
+}
 
 interface BookingWidgetProps {
   property: Property;
+  pricingRules?: PricingRule[];
+  blockedRanges?: BlockedRange[];
   disabledDates?: Date[];
 }
 
-export default function BookingWidget({ property, disabledDates = [] }: BookingWidgetProps) {
+export default function BookingWidget({
+  property,
+  pricingRules = [],
+  blockedRanges = [],
+  disabledDates = [],
+}: BookingWidgetProps) {
   const [range, setRange] = useState<DateRange | undefined>();
   const [step, setStep] = useState<"dates" | "guest_info" | "pix_checkout">("dates");
 
-  // Dados do formulário do hóspede
+  // Dados do hóspede
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [cpf, setCpf] = useState("");
 
-  // Estados de processamento e erro
+  // Estados de processamento e resposta do Pix
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [pixData, setPixData] = useState<{
@@ -36,13 +49,13 @@ export default function BookingWidget({ property, disabledDates = [] }: BookingW
   const checkOut = range?.to;
   const totalNights = checkIn && checkOut ? differenceInDays(checkOut, checkIn) : 0;
 
-  // Cálculo básico de valor estimado na tela
+  // Cálculo básico de valor estimado
   const pricePerNight = property.preco_semana || 0;
   const rawSubtotal = totalNights * pricePerNight;
   const cleaningFee = property.cleaning_fee || 0;
   const estimatedTotal = rawSubtotal + cleaningFee;
 
-  // Validação da Janela de Disponibilidade em meses
+  // Validação da Janela de Disponibilidade
   const maxAvailableDate = property.janela_disponibilidade_meses
     ? new Date(new Date().setMonth(new Date().getMonth() + property.janela_disponibilidade_meses))
     : undefined;
@@ -186,7 +199,7 @@ export default function BookingWidget({ property, disabledDates = [] }: BookingW
         </div>
       )}
 
-      {/* ETAPA 2: FORMULÁRIO DO HÓSPEDE (SEM LOGIN SOCIAL) */}
+      {/* ETAPA 2: DADOS DO HÓSPEDE (SEM LOGIN SOCIAL) */}
       {step === "guest_info" && (
         <form onSubmit={handleGeneratePixPayment} className="space-y-4">
           <div className="flex items-center justify-between mb-2">
@@ -259,7 +272,7 @@ export default function BookingWidget({ property, disabledDates = [] }: BookingW
         </form>
       )}
 
-      {/* ETAPA 3: TELA DE PAGAMENTO PIX */}
+      {/* ETAPA 3: PAGAMENTO PIX */}
       {step === "pix_checkout" && pixData && (
         <div className="text-center space-y-4">
           <h3 className="font-bold text-gray-900 text-lg">Pagamento via Pix</h3>
