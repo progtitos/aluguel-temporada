@@ -1,44 +1,52 @@
 import { NextResponse } from "next/server";
-import { createClient, createAdminClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/server";
 import { createCardPreference, createPixPayment, MercadoPagoRequestError } from "@/lib/mercadopago";
 import { calculatePricing } from "@/lib/pricing";
+import { isWithinAvailabilityWindow } from "@/lib/availability";
 import { splitFullName } from "@/lib/utils";
+import { isValidBrazilianPhone, unmaskDigits } from "@/lib/phoneMask";
+import { isValidCPF, unmaskCPFDigits } from "@/lib/cpfMask";
+
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 export async function POST(request: Request) {
-  const supabase = createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-
-  if (!user) {
-    return NextResponse.json({ error: "É necessário estar logado." }, { status: 401 });
-  }
-
-  // Perfil (nome completo + WhatsApp + CPF) é obrigatório antes de qualquer
-  // cobrança. O CPF é exigido pelo Mercado Pago para gerar o Pix.
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("full_name, whatsapp, cpf")
-    .eq("id", user.id)
-    .single();
-
-  if (!profile?.full_name || !profile?.whatsapp || !profile?.cpf) {
-    return NextResponse.json(
-      { error: "Complete seu nome, WhatsApp e CPF antes de finalizar a reserva." },
-      { status: 400 }
-    );
-  }
-
   const body = await request.json();
-  const { property_id, check_in, check_out, method } = body as {
+  const {
+    property_id,
+    check_in,
+    check_out,
+    method,
+    full_name,
+    email,
+    whatsapp,
+    cpf,
+  } = body as {
     property_id: string;
     check_in: string;
     check_out: string;
     method: "pix" | "cartao";
+    full_name: string;
+    email: string;
+    whatsapp: string;
+    cpf: string;
   };
 
   if (!property_id || !check_in || !check_out) {
     return NextResponse.json({ error: "Dados incompletos." }, { status: 400 });
+  }
+
+  // Validação dos dados informados no formulário
+  if (!full_name || full_name.trim().length < 3) {
+    return NextResponse.json({ error: "Informe o nome completo." }, { status: 400 });
+  }
+  if (!email || !EMAIL_REGEX.test(email)) {
+    return NextResponse.json({ error: "Informe um e-mail válido." }, { status: 400 });
+  }
+  if (!whatsapp || !isValidBrazilianPhone(whatsapp)) {
+    return NextResponse.json({ error: "Informe um WhatsApp válido, com DDD." }, { status: 400 });
+  }
+  if (!cpf || !isValidCPF(cpf)) {
+    return NextResponse.json({ error: "Informe um CPF válido." }, { status: 400 });
   }
 
   const admin = createAdminClient();
@@ -53,14 +61,23 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Imóvel não encontrado." }, { status: 404 });
   }
 
+  if (!isWithinAvailabilityWindow(check_out, property.janela_disponibilidade_meses)) {
+    return NextResponse.json(
+      {
+        error:
+          property.janela_disponibilidade_meses === 1
+            ? "Este imóvel só aceita reservas para o próximo mês."
+            : `Este imóvel só aceita reservas para os próximos ${property.janela_disponibilidade_meses} meses.`,
+      },
+      { status: 400 }
+    );
+  }
+
   const { data: pricingRules } = await admin
     .from("pricing_rules")
     .select("*")
     .eq("property_id", property_id);
 
-  // Preço SEMPRE recalculado a partir das tarifas cadastradas — o valor
-  // enviado pelo client (se algum) é ignorado. Isso evita que alguém
-  // manipule o total via DevTools/API diretamente.
   const pricing = calculatePricing(property, pricingRules ?? [], check_in, check_out);
 
   if (pricing.nightsCount < 1) {
@@ -75,16 +92,16 @@ export async function POST(request: Request) {
     );
   }
 
-  // Cria a reserva como "pendente". O trigger no banco impede overbooking.
+  // Insere no banco com guest_id null (sem exigir estar logado)
   const { data: booking, error: bookingError } = await admin
     .from("bookings")
     .insert({
       property_id,
-      guest_id: user.id,
-      guest_name: profile.full_name,
-      guest_email: user.email,
-      guest_phone: profile.whatsapp,
-      guest_cpf: profile.cpf,
+      guest_id: null,
+      guest_name: full_name.trim(),
+      guest_email: email.trim(),
+      guest_phone: unmaskDigits(whatsapp),
+      guest_cpf: unmaskCPFDigits(cpf),
       check_in,
       check_out,
       total_amount: pricing.total,
@@ -102,15 +119,15 @@ export async function POST(request: Request) {
 
   try {
     if (method === "pix") {
-      const { firstName, lastName } = splitFullName(profile.full_name);
+      const { firstName, lastName } = splitFullName(full_name.trim());
 
       const pix = await createPixPayment({
         amount: pricing.total,
         description: `Reserva - ${property.name}`,
-        payerEmail: user.email!,
+        payerEmail: email.trim(),
         payerFirstName: firstName,
         payerLastName: lastName,
-        payerCpf: profile.cpf,
+        payerCpf: cpf,
         bookingId: booking.id,
       });
 
@@ -133,7 +150,7 @@ export async function POST(request: Request) {
     const pref = await createCardPreference({
       amount: pricing.total,
       title: `Reserva - ${property.name}`,
-      payerEmail: user.email!,
+      payerEmail: email.trim(),
       bookingId: booking.id,
     });
 
@@ -151,12 +168,8 @@ export async function POST(request: Request) {
       init_point: pref.init_point,
     });
   } catch (error) {
-    // Reserva pendente sem pagamento gerado: remove para não travar as datas.
     await admin.from("bookings").delete().eq("id", booking.id);
 
-    // Propaga a mensagem real do Mercado Pago (ex.: campo inválido/faltando)
-    // em vez de um erro genérico — essencial para diagnosticar problemas
-    // como o do Pix, que falhava silenciosamente antes desta correção.
     const message =
       error instanceof MercadoPagoRequestError
         ? error.message
