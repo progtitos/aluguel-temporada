@@ -124,65 +124,28 @@ export async function POST(request: Request) {
   }
 
   try {
-    if (method === "pix") {
-      const { firstName, lastName } = splitFullName(cleanName);
+   // Altere apenas o bloco "if (method === 'pix')" dentro do seu try/catch:
 
-      const pix = await createPixPayment({
-        amount: pricing.total,
-        description: `Reserva - ${property.name}`,
-        payerEmail: cleanEmail,
-        payerFirstName: firstName,
-        payerLastName: lastName || "Hospede", // Garante um sobrenome caso seja nome único
-        payerCpf: cleanCpf, // CPF limpo contendo exatamente 11 dígitos
-        bookingId: booking.id,
-      });
+if (method === "pix") {
+  // Gera a preferência de checkout no Mercado Pago (evita a trava de política da API Transparente)
+  const pref = await createCardPreference({
+    amount: pricing.total,
+    title: `Reserva - ${property.name}`,
+    payerEmail: cleanEmail,
+    bookingId: booking.id,
+  });
 
-      await admin.from("payments").insert({
-        booking_id: booking.id,
-        mp_payment_id: String(pix.id),
-        method: "pix",
-        status: pix.status ?? "pending",
-        amount: pricing.total,
-      });
+  await admin.from("payments").insert({
+    booking_id: booking.id,
+    mp_preference_id: pref.id,
+    method: "pix",
+    status: "pending",
+    amount: pricing.total,
+  });
 
-      return NextResponse.json({
-        booking_id: booking.id,
-        total: pricing.total,
-        qr_code: pix.qr_code,
-        qr_code_base64: pix.qr_code_base64,
-      });
-    }
-
-    const pref = await createCardPreference({
-      amount: pricing.total,
-      title: `Reserva - ${property.name}`,
-      payerEmail: cleanEmail,
-      bookingId: booking.id,
-    });
-
-    await admin.from("payments").insert({
-      booking_id: booking.id,
-      mp_preference_id: pref.id,
-      method: "credit_card",
-      status: "pending",
-      amount: pricing.total,
-    });
-
-    return NextResponse.json({
-      booking_id: booking.id,
-      total: pricing.total,
-      init_point: pref.init_point,
-    });
-  } catch (error) {
-    // Caso falhe na API do Mercado Pago, estorna a reserva pendente do banco
-    await admin.from("bookings").delete().eq("id", booking.id);
-
-    const message =
-      error instanceof MercadoPagoRequestError
-        ? error.message
-        : "Erro ao gerar pagamento no Mercado Pago.";
-
-    console.error("Falha ao gerar pagamento:", error);
-    return NextResponse.json({ error: message }, { status: 500 });
-  }
+  return NextResponse.json({
+    booking_id: booking.id,
+    total: pricing.total,
+    init_point: pref.init_point, // Redireciona para o Checkout onde o Pix é liberado
+  });
 }
