@@ -45,19 +45,23 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Inserção com cast seguro no Supabase Client
+    // Calcular total com base no preço cadastrado no imóvel
+    const propPrice = (property as any).price_per_day || (property as any).price || (property as any).price_per_night || 0;
+
+    // 3. Inserção mapeando os nomes exatos das colunas da sua tabela 'bookings'
     const { data: booking, error: bookingError } = await supabase
       .from("bookings")
       .insert({
         property_id,
         check_in,
         check_out,
-        full_name: cleanName,
-        email: cleanEmail,
-        whatsapp: cleanPhone,
-        cpf: cleanCpf,
+        guest_name: cleanName,
+        guest_email: cleanEmail,
+        guest_phone: cleanPhone,
+        guest_cpf: cleanCpf,
         status: "pendente",
         payment_method: method,
+        total_amount: propPrice,
       } as any)
       .select()
       .single();
@@ -76,9 +80,7 @@ export async function POST(request: Request) {
       const firstName = nameParts[0];
       const lastName = nameParts.slice(1).join(" ") || "Hospede";
 
-      // Leitura flexível do valor total ou da diária
-      const propPrice = (property as any).price_per_day || (property as any).price || (property as any).price_per_night || 0;
-      const transactionAmount = Number((booking as any).total_amount || (booking as any).total_price || propPrice);
+      const transactionAmount = Number((booking as any).total_amount || propPrice);
 
       const paymentResponse = await mpPayment.create({
         body: {
