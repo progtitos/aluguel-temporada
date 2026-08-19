@@ -12,7 +12,7 @@ import { formatBRL, formatDate, toISODate } from "@/lib/utils";
 import type { PricingRule, Property } from "@/types/database";
 
 type Blocked = { check_in: string; check_out: string };
-type Step = "datas" | "dados" | "pagamento";
+type Step = "datas" | "dados";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -32,7 +32,6 @@ export default function BookingWidget({
 }) {
   const [range, setRange] = useState<DateRange | undefined>();
   const [step, setStep] = useState<Step>("datas");
-  const [method, setMethod] = useState<"pix" | "cartao">("pix");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -76,7 +75,9 @@ export default function BookingWidget({
     setStep("dados");
   }
 
-  function handleContinueToPayment() {
+  async function handlePay() {
+    if (!range?.from || !range?.to) return;
+
     setError(null);
     if (fullName.trim().length < 3) {
       setError("Informe seu nome completo.");
@@ -91,16 +92,11 @@ export default function BookingWidget({
       return;
     }
     if (!isValidCPF(cpf)) {
-      setError("Informe um CPF válido (necessário para gerar o Pix).");
+      setError("Informe um CPF válido.");
       return;
     }
-    setStep("pagamento");
-  }
 
-  async function handlePay() {
-    if (!range?.from || !range?.to) return;
     setLoading(true);
-    setError(null);
     try {
       const res = await fetch("/api/bookings", {
         method: "POST",
@@ -109,24 +105,24 @@ export default function BookingWidget({
           property_id: property.id,
           check_in: toISODate(range.from),
           check_out: toISODate(range.to),
-          method,
+          method: "pix", // O Mercado Pago gerenciará a escolha final no Checkout Pro
           full_name: fullName.trim(),
           email: email.trim(),
           whatsapp,
           cpf,
         }),
       });
+
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Não foi possível criar a reserva.");
 
-      // Redireciona para o Checkout Pro do Mercado Pago (Pix ou Cartão)
+      // Redireciona o hóspede diretamente para o Mercado Pago
       if (data.init_point) {
         window.location.href = data.init_point;
         return;
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro inesperado.");
-    } finally {
       setLoading(false);
     }
   }
@@ -216,8 +212,7 @@ export default function BookingWidget({
       {step === "dados" && (
         <div className="mt-4 space-y-3">
           <p className="text-sm text-ink/70">
-            Para gerar o pagamento, precisamos do seu nome completo, e-mail, WhatsApp e CPF
-            (exigido pelo Mercado Pago para o Pix).
+            Informe seus dados para prosseguir com a reserva e pagamento seguro.
           </p>
           <label className="block text-sm">
             Nome completo
@@ -264,62 +259,16 @@ export default function BookingWidget({
           {error && <p className="text-sm text-red-600">{error}</p>}
 
           <button
-            onClick={handleContinueToPayment}
-            className="w-full rounded-full bg-forest-700 py-3 font-medium text-white transition active:scale-[0.98]"
+            onClick={handlePay}
+            disabled={loading}
+            className="w-full rounded-full bg-forest-700 py-3 font-medium text-white transition active:scale-[0.98] disabled:opacity-60"
           >
-            Continuar para pagamento
+            {loading ? "Redirecionando para o pagamento..." : "Ir para o pagamento"}
           </button>
           <button
             onClick={() => setStep("datas")}
             className="w-full text-center text-xs text-ink/50 underline"
-          >
-            Voltar
-          </button>
-        </div>
-      )}
-
-      {step === "pagamento" && (
-        <div className="mt-4 space-y-4">
-          <div className="flex justify-between border-b border-forest-100 pb-3 text-sm font-medium">
-            <span>Total a pagar</span>
-            <span>{formatBRL(pricing?.total ?? 0)}</span>
-          </div>
-
-          <div className="flex gap-2">
-            <button
-              onClick={() => setMethod("pix")}
-              className={`flex-1 rounded-full border py-2 text-sm font-medium ${
-                method === "pix"
-                  ? "border-forest-700 bg-forest-700 text-white"
-                  : "border-forest-100 text-ink/70"
-              }`}
-            >
-              Pix
-            </button>
-            <button
-              onClick={() => setMethod("cartao")}
-              className={`flex-1 rounded-full border py-2 text-sm font-medium ${
-                method === "cartao"
-                  ? "border-forest-700 bg-forest-700 text-white"
-                  : "border-forest-100 text-ink/70"
-              }`}
-            >
-              Cartão de crédito
-            </button>
-          </div>
-
-          {error && <p className="text-sm text-red-600">{error}</p>}
-
-          <button
-            onClick={handlePay}
             disabled={loading}
-            className="w-full rounded-full bg-amber-500 py-3 font-medium text-white transition active:scale-[0.98] disabled:opacity-60"
-          >
-            {loading ? "Gerando pagamento..." : "Pagar agora"}
-          </button>
-          <button
-            onClick={() => setStep("dados")}
-            className="w-full text-center text-xs text-ink/50 underline"
           >
             Voltar
           </button>
