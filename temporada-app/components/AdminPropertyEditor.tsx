@@ -18,13 +18,12 @@ type BlockedBooking = {
   guest_name: string | null;
 };
 
-// Cells do calendário encolhem em telas estreitas (clamp), então a grade de
-// domingo a sábado sempre cabe 100% na largura do card, sem scroll lateral.
+// O tamanho do CÍRCULO de cada dia encolhe em telas estreitas (clamp), mas
+// a largura da CÉLULA/coluna é controlada globalmente em globals.css
+// (table-layout: fixed + width: 100%), garantindo 7 colunas sempre iguais.
 const calendarStyle: CSSProperties = {
-  ["--rdp-day-width" as string]: "clamp(1.9rem, 12vw, 2.75rem)",
-  ["--rdp-day-height" as string]: "clamp(1.9rem, 12vw, 2.75rem)",
-  ["--rdp-day_button-width" as string]: "clamp(1.8rem, 11.5vw, 2.6rem)",
-  ["--rdp-day_button-height" as string]: "clamp(1.8rem, 11.5vw, 2.6rem)",
+  ["--rdp-day_button-width" as string]: "clamp(1.9rem, 8vw, 2.5rem)",
+  ["--rdp-day_button-height" as string]: "clamp(1.9rem, 8vw, 2.5rem)",
 };
 
 export default function AdminPropertyEditor({
@@ -54,6 +53,7 @@ export default function AdminPropertyEditor({
     preco_fds: property.preco_fds,
     cleaning_fee: property.cleaning_fee,
     minimo_noites: property.minimo_noites,
+    janela_disponibilidade_meses: property.janela_disponibilidade_meses,
     max_guests: property.max_guests,
     is_active: property.is_active,
   });
@@ -407,6 +407,28 @@ export default function AdminPropertyEditor({
             />
             <span className="mt-1 block text-xs text-ink/40">
               O hóspede não conseguirá avançar o checkout com menos noites que isso.
+            </span>
+          </label>
+          <label className="text-sm">
+            Janela de visualização/disponibilidade
+            <select
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2 bg-white"
+              value={form.janela_disponibilidade_meses ?? ""}
+              onChange={(e) =>
+                update(
+                  "janela_disponibilidade_meses",
+                  e.target.value === "" ? null : Number(e.target.value)
+                )
+              }
+            >
+              <option value="">Sem limite</option>
+              <option value="1">1 mês</option>
+              <option value="2">2 meses</option>
+              <option value="3">3 meses</option>
+            </select>
+            <span className="mt-1 block text-xs text-ink/40">
+              Datas além dessa janela ficam desabilitadas no calendário público, somadas aos
+              bloqueios manuais (sem substituí-los).
             </span>
           </label>
           <label className="text-sm">

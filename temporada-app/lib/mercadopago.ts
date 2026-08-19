@@ -24,6 +24,16 @@ function extractMpMessage(error: unknown): string | undefined {
 
 /**
  * Cria um pagamento Pix direto (QR Code + copia-e-cola).
+ *
+ * CORRIGIDO (notification_url): o Mercado Pago responde
+ * `"notification_url attribute must be url valid"` quando esse campo não é
+ * uma URL pública em HTTPS — o que sempre acontecia em desenvolvimento
+ * local (`NEXT_PUBLIC_SITE_URL=http://localhost:3000`) ou quando a
+ * variável estava ausente. Agora o campo só é incluído no payload quando
+ * `getPublicSiteUrl()` confirma uma URL HTTPS válida; caso contrário ele é
+ * omitido por completo (o Mercado Pago aceita pagamentos sem
+ * `notification_url` — nesse caso a confirmação da reserva por webhook
+ * simplesmente não ocorre em ambiente local, o que é esperado em testes).
  */
 export async function createPixPayment(params: {
   amount: number;
@@ -76,6 +86,9 @@ export async function createPixPayment(params: {
   } catch (error) {
     if (error instanceof MercadoPagoRequestError) throw error;
 
+    // Propaga a causa real (em vez de um erro genérico) para facilitar o
+    // diagnóstico em logs da Vercel — a mensagem da API do MP costuma
+    // apontar exatamente qual campo do payload está inválido/faltando.
     const mpMessage = extractMpMessage(error);
     throw new MercadoPagoRequestError(
       mpMessage ? `Mercado Pago (Pix): ${mpMessage}` : "Falha ao gerar pagamento Pix.",
@@ -86,6 +99,13 @@ export async function createPixPayment(params: {
 
 /**
  * Cria uma Preference (Checkout Pro) para pagamento com cartão de crédito.
+ * O hóspede é redirecionado para o checkout hospedado do Mercado Pago.
+ *
+ * Mesmo cuidado do Pix: `notification_url` e `back_urls` só entram no
+ * payload quando há uma URL pública HTTPS válida. Sem ela, o Checkout Pro
+ * ainda funciona (o Mercado Pago aceita preferências sem `back_urls`),
+ * apenas sem redirecionamento automático de volta ao site ao final do
+ * pagamento — aceitável em teste local, onde não há URL pública mesmo.
  */
 export async function createCardPreference(params: {
   amount: number;

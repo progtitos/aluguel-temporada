@@ -47,3 +47,38 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* ---------------------------------------------------------------
+   react-day-picker: grade de 7 colunas SEMPRE iguais (dom a sáb),
+   sem overflow horizontal e sem cortar o último dia no desktop.
+
+   Por padrão a lib renderiza `.rdp-month_grid` como uma <table> com
+   `table-layout: auto` e sem largura definida — em containers mais
+   estreitos que a soma "natural" das 7 colunas (ex.: a coluna lateral
+   do BookingWidget em telas desktop), o navegador não encolhe a
+   tabela; ela simplesmente ultrapassa o card e o sábado fica cortado
+   pela borda arredondada do container (`overflow: hidden`).
+
+   Forçar `table-layout: fixed` + `width: 100%` faz o navegador
+   distribuir as 7 colunas em frações IGUAIS da largura disponível,
+   sempre cabendo no card, com ou sem scroll — exatamente o
+   comportamento pedido (grid de 7 colunas iguais, dom-sáb 100%
+   visível). O tamanho dos círculos dos dias (--rdp-day_button-*)
+   continua responsivo via clamp() nos componentes que usam o
+   calendário, para não ficar desproporcional em telas bem estreitas.
+   --------------------------------------------------------------- */
+.rdp-months,
+.rdp-month,
+.rdp-month_grid {
+  width: 100%;
+  max-width: 100%;
+}
+
+.rdp-month_grid {
+  table-layout: fixed;
+}
+
+.rdp-weekday,
+.rdp-day {
+  width: auto;
+}

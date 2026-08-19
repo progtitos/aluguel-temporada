@@ -23,6 +23,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     "preco_fds",
     "cleaning_fee",
     "minimo_noites",
+    "janela_disponibilidade_meses",
     "checkin_time",
     "checkout_time",
     "max_guests",

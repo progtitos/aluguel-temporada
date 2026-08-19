@@ -21,6 +21,7 @@ Custo de infraestrutura: **R$ 0** (todos os planos free tier).
    - `05_pricing_checkin_and_profiles.sql` (tarifas semana/fds, feriados, perfil do hóspede, check-in/out)
    - `06_minimo_noites.sql` (estadia mínima configurável por imóvel)
    - `07_guest_cpf.sql` (CPF do hóspede — exigido pelo Mercado Pago para gerar o Pix)
+   - `08_janela_disponibilidade.sql` (janela de disponibilidade do calendário — 1/2/3 meses ou sem limite)
 
    ⚠️ **Atenção**: o arquivo `05` **remove a coluna `price_per_night`** (substituída por `preco_semana`/`preco_fds`). Rode os arquivos em ordem, sempre antes de fazer deploy do código correspondente.
 
@@ -40,7 +41,9 @@ Em **Authentication → URL Configuration**:
 
 ---
 
-## 2. Login social — Google
+## 2. Login social — Google (exclusivo do painel `/admin`)
+
+> ℹ️ **O fluxo de reserva do hóspede não usa mais login social.** O hóspede reserva direto, preenchendo nome, e-mail, WhatsApp e CPF no próprio checkout — sem OAuth, sem redirecionamento, sem perda da seleção de datas. Google e Apple aqui servem **apenas** para você (o dono do imóvel) entrar no `/admin`.
 
 1. Vá em [console.cloud.google.com](https://console.cloud.google.com) → crie um projeto (ou use um existente).
 2. **APIs e Serviços → Tela de consentimento OAuth**: configure como "Externo", preencha nome do app, e-mail de suporte.
@@ -53,7 +56,7 @@ Em **Authentication → URL Configuration**:
 
 ---
 
-## 3. Login social — Apple (Sign in with Apple)
+## 3. Login social — Apple (opcional, também exclusivo do `/admin`)
 
 > Requer conta paga no **Apple Developer Program** (US$ 99/ano). É o único item pago do projeto — caso não queira arcar com esse custo, deixe apenas o login Google habilitado e remova o botão da Apple em `components/LoginButtons.tsx`.
 
@@ -82,11 +85,17 @@ Em **Authentication → URL Configuration**:
 ### 4.3 Pix
 Para receber via Pix é necessário que sua conta Mercado Pago tenha o Pix habilitado (normalmente automático para contas brasileiras verificadas).
 
-O Mercado Pago **exige** `payer.first_name`, `payer.last_name` e `payer.identification` (CPF) para gerar a cobrança Pix — por isso o app pede CPF na etapa de perfil antes do checkout (`profiles.cpf`). Sem isso, a API do MP rejeita a criação do pagamento.
+O Mercado Pago **exige** `payer.first_name`, `payer.last_name` e `payer.identification` (CPF) para gerar a cobrança Pix — por isso o checkout pede nome completo e CPF antes de gerar o pagamento (gravados direto em `bookings.guest_cpf`, sem exigir login). Sem isso, a API do MP rejeita a criação do pagamento.
+
+### 4.4 `notification_url` em ambiente local
+
+A API do Mercado Pago rejeita `notification_url` (e `back_urls`) quando o valor não é uma URL pública em HTTPS — o que sempre acontece ao rodar `npm run dev` localmente (`NEXT_PUBLIC_SITE_URL=http://localhost:3000`). O app (`lib/siteUrl.ts`) detecta isso automaticamente e **omite esses campos do payload** quando não há uma URL HTTPS válida configurada, em vez de quebrar a chamada. Na prática:
+- **Local**: o Pix/Cartão são gerados normalmente, mas o webhook não é acionado (Mercado Pago não tem para onde notificar) — a reserva fica em `pendente` até você confirmar manualmente no Supabase, o que é esperado em teste.
+- **Produção (Vercel)**: assim que `NEXT_PUBLIC_SITE_URL` estiver configurada como a URL pública HTTPS do seu domínio, tudo funciona automaticamente, incluindo a confirmação via webhook.
 
 ---
 
-## 4.4 Geocodificação de endereços (gratuita)
+## 4.5 Geocodificação de endereços (gratuita)
 
 O botão "Buscar coordenadas pelo endereço" no editor de cada imóvel usa a API pública do [Nominatim](https://nominatim.org) (OpenStreetMap) — gratuita, sem chave de API, mantendo a infra 100% free tier. Não é necessário configurar nada: basta o admin preencher o "Endereço completo" e clicar no botão para preencher latitude/longitude automaticamente.
 
@@ -134,12 +143,13 @@ Qualquer outro e-mail que fizer login será redirecionado de volta para a tela d
 
 ## 8. Fluxo de reserva (resumo técnico)
 
-1. Hóspede escolhe as datas em `/imovel/[slug]` → `BookingWidget`. O preço é calculado por `lib/pricing.ts` (semana/fim de semana/feriado) e a estadia mínima do imóvel (`minimo_noites`) é validada antes de liberar o avanço.
-2. Se não estiver logado, o app guarda a seleção em `localStorage` e faz login social (Google/Apple) com `redirectTo=/auth/callback?next=/imovel/[slug]` — o hóspede retorna exatamente para a página do imóvel, com as datas restauradas automaticamente (sem cair na Home).
-3. Antes do pagamento, é obrigatório preencher **nome completo, WhatsApp e CPF** (gravados em `profiles` e também copiados para a `booking` correspondente). O CPF é exigido pelo Mercado Pago para gerar o Pix.
-4. Escolhe Pix ou Cartão → `POST /api/bookings` recalcula o preço no servidor (nunca confia no valor do client), cria a reserva com status `pendente` (o banco impede overbooking via trigger) e gera o pagamento no Mercado Pago.
-5. Mercado Pago notifica `POST /api/mercadopago/webhook` quando o status do pagamento muda.
-6. O webhook consulta o pagamento **diretamente na API do Mercado Pago** (não confia no payload recebido) e só então marca a reserva como `confirmada`.
+1. Hóspede escolhe as datas em `/imovel/[slug]` → `BookingWidget`. O preço é calculado por `lib/pricing.ts` (semana/fim de semana/feriado), a estadia mínima do imóvel (`minimo_noites`) é validada antes de liberar o avanço, e o calendário desabilita automaticamente tanto os bloqueios manuais/reservas existentes quanto as datas fora da **janela de disponibilidade** configurada (`janela_disponibilidade_meses` — 1/2/3 meses ou sem limite).
+2. **Sem login**: o hóspede preenche nome completo, e-mail, WhatsApp e CPF direto no checkout (etapa "dados"). Nenhuma conta é criada, não há redirecionamento — o CPF é exigido pelo Mercado Pago para gerar o Pix.
+3. Escolhe Pix ou Cartão → `POST /api/bookings` valida tudo no servidor (estadia mínima, janela de disponibilidade, formato de e-mail/telefone/CPF), recalcula o preço a partir das tarifas cadastradas (nunca confia no valor do client), cria a reserva com status `pendente` (o banco impede overbooking via trigger) e gera o pagamento no Mercado Pago.
+4. Mercado Pago notifica `POST /api/mercadopago/webhook` quando o status do pagamento muda (apenas quando há uma URL pública HTTPS configurada — ver seção 4.4).
+5. O webhook consulta o pagamento **diretamente na API do Mercado Pago** (não confia no payload recebido) e só então marca a reserva como `confirmada`.
+
+> O login social (Google/Apple) continua existindo no projeto, mas hoje é usado **apenas** para você acessar o `/admin` — não faz mais parte do fluxo de reserva do hóspede.
 
 ---
 

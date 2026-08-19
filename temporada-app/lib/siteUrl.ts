@@ -1,24 +1,24 @@
-
 /**
- * Retorna a URL pública base da aplicação formatada com HTTPS para webhooks e redirecionamentos.
- * Se a URL base for inválida ou ambiente local (http://localhost), retorna null para evitar
- * erros de validação na API do Mercado Pago (ex: notification_url attribute must be url valid).
+ * Retorna a origem pública do site (ex.: "https://seu-app.vercel.app")
+ * SOMENTE quando `NEXT_PUBLIC_SITE_URL` for uma URL HTTPS válida.
+ *
+ * Por quê: a API do Mercado Pago rejeita `notification_url` (e reclama de
+ * `back_urls`) quando o valor não é uma URL pública em HTTPS — o que
+ * acontece sempre que rodamos localmente com
+ * `NEXT_PUBLIC_SITE_URL=http://localhost:3000`, ou quando a variável nem
+ * está definida (gerando literalmente a string "undefined/..." ao
+ * concatenar). Em vez de deixar isso quebrar a chamada, os callers desta
+ * função devem OMITIR o campo inteiro quando ela retornar `null`.
  */
 export function getPublicSiteUrl(): string | null {
-  const url = process.env.NEXT_PUBLIC_APP_URL || process.env.VERCEL_URL;
+  const raw = process.env.NEXT_PUBLIC_SITE_URL?.trim();
+  if (!raw) return null;
 
-  if (!url) return null;
-
-  // Garante o protocolo https:// caso o domínio venha limpo da Vercel
-  const formattedUrl = url.startsWith("http://") || url.startsWith("https://")
-    ? url
-    : `https://${url}`;
-
-  // Se for ambiente local ou http não-seguro, retorna null para omitir o notification_url
-  if (formattedUrl.includes("localhost") || formattedUrl.startsWith("http://")) {
-    return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:") return null; // http://localhost cai aqui
+    return url.origin;
+  } catch {
+    return null; // valor mal formatado (ex.: "localhost:3000" sem protocolo)
   }
-
-  // Remove barra final se houver
-  return formattedUrl.replace(/\/$/, "");
 }

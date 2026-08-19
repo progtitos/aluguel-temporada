@@ -2,9 +2,10 @@
 
 import { useMemo, useState, type CSSProperties } from "react";
 import { DayPicker, type DateRange, type Matcher } from "react-day-picker";
-import "react-day-picker/dist/style.css";
-import { ptBR } from "date-fns/locale";
+import "react-day-picker/style.css";
+import { ptBR } from "@/lib/dateLocale";
 import { calculatePricing, rateSourceLabel } from "@/lib/pricing";
+import { maskWhatsApp, isValidBrazilianPhone } from "@/lib/phoneMask";
 import { maskCPF, isValidCPF } from "@/lib/cpfMask";
 import { getAvailabilityWindowEnd } from "@/lib/availability";
 import { formatBRL, formatDate, toISODate } from "@/lib/utils";
@@ -15,6 +16,10 @@ type Step = "datas" | "dados" | "pagamento";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+// O tamanho do CÍRCULO de cada dia encolhe em telas estreitas (clamp),
+// mas a largura da CÉLULA/coluna é controlada globalmente em globals.css
+// (table-layout: fixed + width: 100%), garantindo 7 colunas sempre iguais
+// e visíveis por inteiro, do "dom" ao "sáb", sem cortar nada no desktop.
 const calendarStyle: CSSProperties = {
   ["--rdp-day_button-width" as string]: "clamp(1.9rem, 8vw, 2.5rem)",
   ["--rdp-day_button-height" as string]: "clamp(1.9rem, 8vw, 2.5rem)",
@@ -22,12 +27,12 @@ const calendarStyle: CSSProperties = {
 
 export default function BookingWidget({
   property,
-  pricingRules = [],
-  blockedRanges = [],
+  pricingRules,
+  blockedRanges,
 }: {
   property: Property;
-  pricingRules?: PricingRule[];
-  blockedRanges?: Blocked[];
+  pricingRules: PricingRule[];
+  blockedRanges: Blocked[];
 }) {
   const [range, setRange] = useState<DateRange | undefined>();
   const [step, setStep] = useState<Step>("datas");
@@ -44,25 +49,15 @@ export default function BookingWidget({
   const [whatsapp, setWhatsapp] = useState("");
   const [cpf, setCpf] = useState("");
 
-  // Máscara local de telefone para evitar erros de exportação
-  const handleWhatsappChange = (val: string) => {
-    const digits = val.replace(/\D/g, "").slice(0, 11);
-    let formatted = digits;
-    if (digits.length > 2) {
-      formatted = `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
-    }
-    if (digits.length > 7) {
-      formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
-    }
-    setWhatsapp(formatted);
-  };
-
   const windowEnd = useMemo(
     () => getAvailabilityWindowEnd(property.janela_disponibilidade_meses),
     [property.janela_disponibilidade_meses]
   );
 
   const disabledDates = useMemo(() => {
+    // A janela de disponibilidade do imóvel se soma aos bloqueios manuais
+    // (reservas confirmadas/pendentes e bloqueios do admin) — nunca os
+    // substitui: ambos ficam desabilitados juntos no mesmo calendário.
     const matchers: Matcher[] = [
       { before: new Date() },
       ...blockedRanges.map((b) => ({
@@ -102,7 +97,7 @@ export default function BookingWidget({
       setError("Informe um e-mail válido.");
       return;
     }
-    if (whatsapp.replace(/\D/g, "").length < 10) {
+    if (!isValidBrazilianPhone(whatsapp)) {
       setError("Informe um número de WhatsApp válido, com DDD.");
       return;
     }
@@ -150,7 +145,7 @@ export default function BookingWidget({
   }
 
   return (
-    <div className="rounded-xl border border-forest-100 bg-white p-5 shadow-soft max-w-md mx-auto">
+    <div className="rounded-xl2 border border-forest-100 bg-white p-5 shadow-soft">
       <p className="font-display text-2xl font-semibold text-ink">
         {formatBRL(property.preco_semana)}
         <span className="text-base font-normal text-ink/50"> / diária (semana)</span>
@@ -159,7 +154,7 @@ export default function BookingWidget({
         {formatBRL(property.preco_fds)} / diária (sexta a domingo)
       </p>
       {property.minimo_noites > 1 && (
-        <p className="mt-1 text-xs text-amber-600 font-medium">
+        <p className="mt-1 text-xs text-amber-600">
           Estadia mínima: {property.minimo_noites} noites
         </p>
       )}
@@ -171,8 +166,7 @@ export default function BookingWidget({
 
       {step === "datas" && (
         <>
-          {/* Container ajustado para remover a barra de scroll cinza */}
-          <div className="mt-4 w-full flex justify-center overflow-hidden">
+          <div className="mt-4 w-full">
             <DayPicker
               mode="range"
               locale={ptBR}
@@ -180,7 +174,7 @@ export default function BookingWidget({
               onSelect={setRange}
               disabled={disabledDates}
               numberOfMonths={1}
-              className="!font-sans m-0"
+              className="!font-sans w-full"
               style={calendarStyle}
             />
           </div>
@@ -208,12 +202,12 @@ export default function BookingWidget({
                 <span>Taxa de limpeza</span>
                 <span>{formatBRL(pricing.cleaningFee)}</span>
               </div>
-              <div className="flex justify-between pt-2 font-semibold text-base">
+              <div className="flex justify-between pt-2 font-semibold">
                 <span>Total</span>
                 <span>{formatBRL(pricing.total)}</span>
               </div>
               {pricing.nightsCount < pricing.minNightsRequired && (
-                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 mt-2">
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
                   Este período exige uma estadia mínima de {pricing.minNightsRequired} noites.
                   Selecione um intervalo maior para continuar.
                 </p>
@@ -225,7 +219,7 @@ export default function BookingWidget({
 
           <button
             onClick={handleContinue}
-            className="mt-4 w-full rounded-full bg-forest-700 py-3 font-medium text-white transition active:scale-[0.98] hover:bg-emerald-800"
+            className="mt-4 w-full rounded-full bg-forest-700 py-3 font-medium text-white transition active:scale-[0.98]"
           >
             Continuar
           </button>
@@ -241,7 +235,7 @@ export default function BookingWidget({
           <label className="block text-sm">
             Nome completo
             <input
-              className="mt-1 w-full rounded-lg border border-forest-100 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-forest-700"
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="Seu nome completo"
@@ -252,7 +246,7 @@ export default function BookingWidget({
             E-mail
             <input
               type="email"
-              className="mt-1 w-full rounded-lg border border-forest-100 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-forest-700"
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="voce@email.com"
@@ -262,9 +256,9 @@ export default function BookingWidget({
           <label className="block text-sm">
             WhatsApp
             <input
-              className="mt-1 w-full rounded-lg border border-forest-100 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-forest-700"
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
               value={whatsapp}
-              onChange={(e) => handleWhatsappChange(e.target.value)}
+              onChange={(e) => setWhatsapp(maskWhatsApp(e.target.value))}
               placeholder="(11) 99999-9999"
               inputMode="tel"
             />
@@ -272,7 +266,7 @@ export default function BookingWidget({
           <label className="block text-sm">
             CPF
             <input
-              className="mt-1 w-full rounded-lg border border-forest-100 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-forest-700"
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
               value={cpf}
               onChange={(e) => setCpf(maskCPF(e.target.value))}
               placeholder="000.000.000-00"
@@ -284,13 +278,13 @@ export default function BookingWidget({
 
           <button
             onClick={handleContinueToPayment}
-            className="w-full rounded-full bg-forest-700 py-3 font-medium text-white transition active:scale-[0.98] hover:bg-emerald-800"
+            className="w-full rounded-full bg-forest-700 py-3 font-medium text-white transition active:scale-[0.98]"
           >
             Continuar para pagamento
           </button>
           <button
             onClick={() => setStep("datas")}
-            className="w-full text-center text-xs text-ink/50 underline py-1"
+            className="w-full text-center text-xs text-ink/50 underline"
           >
             Voltar
           </button>
@@ -307,7 +301,7 @@ export default function BookingWidget({
           <div className="flex gap-2">
             <button
               onClick={() => setMethod("pix")}
-              className={`flex-1 rounded-full border py-2 text-sm font-medium transition ${
+              className={`flex-1 rounded-full border py-2 text-sm font-medium ${
                 method === "pix"
                   ? "border-forest-700 bg-forest-700 text-white"
                   : "border-forest-100 text-ink/70"
@@ -317,7 +311,7 @@ export default function BookingWidget({
             </button>
             <button
               onClick={() => setMethod("cartao")}
-              className={`flex-1 rounded-full border py-2 text-sm font-medium transition ${
+              className={`flex-1 rounded-full border py-2 text-sm font-medium ${
                 method === "cartao"
                   ? "border-forest-700 bg-forest-700 text-white"
                   : "border-forest-100 text-ink/70"
@@ -332,13 +326,13 @@ export default function BookingWidget({
           <button
             onClick={handlePay}
             disabled={loading}
-            className="w-full rounded-full bg-amber-500 py-3 font-medium text-white transition active:scale-[0.98] disabled:opacity-60 hover:bg-amber-600"
+            className="w-full rounded-full bg-amber-500 py-3 font-medium text-white transition active:scale-[0.98] disabled:opacity-60"
           >
             {loading ? "Gerando pagamento..." : "Pagar agora"}
           </button>
           <button
             onClick={() => setStep("dados")}
-            className="w-full text-center text-xs text-ink/50 underline py-1"
+            className="w-full text-center text-xs text-ink/50 underline"
           >
             Voltar
           </button>
@@ -356,14 +350,14 @@ export default function BookingWidget({
             <img
               src={`data:image/png;base64,${pixData.qr_code_base64}`}
               alt="QR Code Pix"
-              className="mx-auto h-56 w-56 rounded-xl border border-forest-100 p-2"
+              className="mx-auto h-56 w-56 rounded-xl border border-forest-100"
             />
           )}
           {pixData.qr_code && (
             <textarea
               readOnly
               value={pixData.qr_code}
-              className="h-20 w-full resize-none rounded-lg border border-forest-100 p-2 text-xs focus:outline-none"
+              className="h-20 w-full resize-none rounded-lg border border-forest-100 p-2 text-xs"
               onFocus={(e) => e.currentTarget.select()}
             />
           )}

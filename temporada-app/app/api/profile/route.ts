@@ -3,6 +3,13 @@ import { createClient } from "@/lib/supabase/server";
 import { isValidBrazilianPhone, unmaskDigits } from "@/lib/phoneMask";
 import { isValidCPF, unmaskCPFDigits } from "@/lib/cpfMask";
 
+// NOTA: desde que o fluxo de reserva do hóspede deixou de exigir login
+// social (ver components/BookingWidget.tsx), esta rota e a tabela
+// `profiles` ficaram sem consumidor ativo — o checkout agora grava nome/
+// e-mail/WhatsApp/CPF diretamente em `bookings`. Mantida aqui sem uso por
+// enquanto (não quebra nada), caso um cadastro de hóspede recorrente
+// volte a fazer sentido no futuro. Removível com segurança se preferir
+// simplificar o schema.
 export async function GET() {
   const supabase = createClient();
   const {
