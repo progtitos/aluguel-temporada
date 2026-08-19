@@ -35,9 +35,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Dados incompletos." }, { status: 400 });
   }
 
-  // Dados do hóspede agora são coletados diretamente no checkout (sem
-  // login social) e validados aqui — nunca confiamos apenas na validação
-  // do formulário no client.
+  // Dados do hóspede coletados no checkout e validados no servidor
   if (!full_name || full_name.trim().length < 3) {
     return NextResponse.json({ error: "Informe o nome completo." }, { status: 400 });
   }
@@ -51,6 +49,10 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Informe um CPF válido." }, { status: 400 });
   }
 
+  const cleanCpf = unmaskCPFDigits(cpf);
+  const cleanEmail = email.trim().toLowerCase();
+  const cleanName = full_name.trim();
+
   const admin = createAdminClient();
 
   const { data: property } = await admin
@@ -63,9 +65,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Imóvel não encontrado." }, { status: 404 });
   }
 
-  // Reforça no servidor a janela de disponibilidade configurada no
-  // imóvel — impede que alguém contorne a restrição do calendário
-  // chamando esta rota diretamente com uma data além do permitido.
+  // Reforça no servidor a janela de disponibilidade
   if (!isWithinAvailabilityWindow(check_out, property.janela_disponibilidade_meses)) {
     return NextResponse.json(
       {
@@ -83,9 +83,7 @@ export async function POST(request: Request) {
     .select("*")
     .eq("property_id", property_id);
 
-  // Preço SEMPRE recalculado a partir das tarifas cadastradas — o valor
-  // enviado pelo client (se algum) é ignorado. Isso evita que alguém
-  // manipule o total via DevTools/API diretamente.
+  // Recálculo seguro das tarifas
   const pricing = calculatePricing(property, pricingRules ?? [], check_in, check_out);
 
   if (pricing.nightsCount < 1) {
@@ -100,18 +98,16 @@ export async function POST(request: Request) {
     );
   }
 
-  // Cria a reserva como "pendente", sem vínculo de usuário autenticado
-  // (guest_id fica null — o fluxo não exige mais login). O trigger no
-  // banco impede overbooking.
+  // Registra reserva no banco de dados
   const { data: booking, error: bookingError } = await admin
     .from("bookings")
     .insert({
       property_id,
       guest_id: null,
-      guest_name: full_name.trim(),
-      guest_email: email.trim(),
+      guest_name: cleanName,
+      guest_email: cleanEmail,
       guest_phone: unmaskDigits(whatsapp),
-      guest_cpf: unmaskCPFDigits(cpf),
+      guest_cpf: cleanCpf,
       check_in,
       check_out,
       total_amount: pricing.total,
@@ -129,15 +125,15 @@ export async function POST(request: Request) {
 
   try {
     if (method === "pix") {
-      const { firstName, lastName } = splitFullName(full_name.trim());
+      const { firstName, lastName } = splitFullName(cleanName);
 
       const pix = await createPixPayment({
         amount: pricing.total,
         description: `Reserva - ${property.name}`,
-        payerEmail: email.trim(),
+        payerEmail: cleanEmail,
         payerFirstName: firstName,
-        payerLastName: lastName,
-        payerCpf: cpf,
+        payerLastName: lastName || "Hospede", // Garante um sobrenome caso seja nome único
+        payerCpf: cleanCpf, // CPF limpo contendo exatamente 11 dígitos
         bookingId: booking.id,
       });
 
@@ -160,7 +156,7 @@ export async function POST(request: Request) {
     const pref = await createCardPreference({
       amount: pricing.total,
       title: `Reserva - ${property.name}`,
-      payerEmail: email.trim(),
+      payerEmail: cleanEmail,
       bookingId: booking.id,
     });
 
@@ -178,7 +174,7 @@ export async function POST(request: Request) {
       init_point: pref.init_point,
     });
   } catch (error) {
-    // Reserva pendente sem pagamento gerado: remove para não travar as datas.
+    // Caso falhe na API do Mercado Pago, estorna a reserva pendente do banco
     await admin.from("bookings").delete().eq("id", booking.id);
 
     const message =
