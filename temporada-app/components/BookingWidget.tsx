@@ -1,53 +1,52 @@
 "use client";
 
-import { useState } from "react";
-import { format, differenceInDays } from "date-fns";
-import { ptBR } from "date-fns/locale";
-import { DayPicker, DateRange } from "react-day-picker";
+import { useMemo, useState, type CSSProperties } from "react";
+import { DayPicker, type DateRange, type Matcher } from "react-day-picker";
 import "react-day-picker/dist/style.css";
-import { Property, PricingRule } from "@/types/database";
+import { ptBR } from "date-fns/locale";
+import { calculatePricing, rateSourceLabel } from "@/lib/pricing";
 import { maskCPF, isValidCPF } from "@/lib/cpfMask";
+import { getAvailabilityWindowEnd } from "@/lib/availability";
+import { formatBRL, formatDate, toISODate } from "@/lib/utils";
+import type { PricingRule, Property } from "@/types/database";
 
-// Estrutura enviada pelo app/imovel/[slug]/page.tsx
-interface BlockedRange {
-  check_in: string;
-  check_out: string;
-}
+type Blocked = { check_in: string; check_out: string };
+type Step = "datas" | "dados" | "pagamento";
 
-interface BookingWidgetProps {
-  property: Property;
-  pricingRules?: PricingRule[];
-  blockedRanges?: BlockedRange[];
-  disabledDates?: Date[];
-}
+const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+const calendarStyle: CSSProperties = {
+  ["--rdp-day_button-width" as string]: "clamp(1.9rem, 8vw, 2.5rem)",
+  ["--rdp-day_button-height" as string]: "clamp(1.9rem, 8vw, 2.5rem)",
+};
 
 export default function BookingWidget({
   property,
   pricingRules = [],
   blockedRanges = [],
-  disabledDates = [],
-}: BookingWidgetProps) {
+}: {
+  property: Property;
+  pricingRules?: PricingRule[];
+  blockedRanges?: Blocked[];
+}) {
   const [range, setRange] = useState<DateRange | undefined>();
-  const [step, setStep] = useState<"dates" | "guest_info" | "pix_checkout">("dates");
-
-  // Dados do hóspede
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [phone, setPhone] = useState("");
-  const [cpf, setCpf] = useState("");
-
-  // Estados do Pix
+  const [step, setStep] = useState<Step>("datas");
+  const [method, setMethod] = useState<"pix" | "cartao">("pix");
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [pixData, setPixData] = useState<{
-    qrCodeBase64?: string;
-    qrCodeCopyPaste?: string;
-    bookingId?: string;
+    qr_code?: string;
+    qr_code_base64?: string;
   } | null>(null);
 
-  // Formatação simples e nativa de Telefone / WhatsApp
-  const handlePhoneChange = (v: string) => {
-    const digits = v.replace(/\D/g, "").slice(0, 11);
+  const [fullName, setFullName] = useState("");
+  const [email, setEmail] = useState("");
+  const [whatsapp, setWhatsapp] = useState("");
+  const [cpf, setCpf] = useState("");
+
+  // Máscara local de telefone para evitar erros de exportação
+  const handleWhatsappChange = (val: string) => {
+    const digits = val.replace(/\D/g, "").slice(0, 11);
     let formatted = digits;
     if (digits.length > 2) {
       formatted = `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
@@ -55,274 +54,318 @@ export default function BookingWidget({
     if (digits.length > 7) {
       formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
     }
-    setPhone(formatted);
+    setWhatsapp(formatted);
   };
 
-  const checkIn = range?.from;
-  const checkOut = range?.to;
-  const totalNights = checkIn && checkOut ? differenceInDays(checkOut, checkIn) : 0;
+  const windowEnd = useMemo(
+    () => getAvailabilityWindowEnd(property.janela_disponibilidade_meses),
+    [property.janela_disponibilidade_meses]
+  );
 
-  // Cálculo financeiro
-  const pricePerNight = property.preco_semana || 0;
-  const rawSubtotal = totalNights * pricePerNight;
-  const cleaningFee = property.cleaning_fee || 0;
-  const estimatedTotal = rawSubtotal + cleaningFee;
+  const disabledDates = useMemo(() => {
+    const matchers: Matcher[] = [
+      { before: new Date() },
+      ...blockedRanges.map((b) => ({
+        from: new Date(b.check_in + "T00:00:00"),
+        to: new Date(new Date(b.check_out + "T00:00:00").getTime() - 86400000),
+      })),
+    ];
+    if (windowEnd) matchers.push({ after: windowEnd });
+    return matchers;
+  }, [blockedRanges, windowEnd]);
 
-  // Janela de Disponibilidade
-  const maxAvailableDate = property.janela_disponibilidade_meses
-    ? new Date(new Date().setMonth(new Date().getMonth() + property.janela_disponibilidade_meses))
-    : undefined;
+  const pricing = useMemo(() => {
+    if (!range?.from || !range?.to) return null;
+    return calculatePricing(property, pricingRules, toISODate(range.from), toISODate(range.to));
+  }, [range, property, pricingRules]);
 
-  // Converte blockedRanges para desabilitar datas no DayPicker
-  const parsedBlockedDates = blockedRanges.map((b) => ({
-    from: new Date(b.check_in),
-    to: new Date(b.check_out),
-  }));
-
-  const handleAdvanceToGuestInfo = () => {
-    setErrorMsg(null);
-    if (!checkIn || !checkOut) {
-      setErrorMsg("Por favor, selecione as datas de entrada e saída.");
+  function handleContinue() {
+    setError(null);
+    if (!range?.from || !range?.to || !pricing || pricing.nightsCount < 1) {
+      setError("Selecione as datas de check-in e check-out.");
       return;
     }
-    if (totalNights < (property.minimo_noites || 1)) {
-      setErrorMsg(`O número mínimo de noites para esta acomodação é ${property.minimo_noites}.`);
+    if (pricing.nightsCount < pricing.minNightsRequired) {
+      setError(`Este período exige uma estadia mínima de ${pricing.minNightsRequired} noites.`);
       return;
     }
-    setStep("guest_info");
-  };
+    setStep("dados");
+  }
 
-  const handleGeneratePixPayment = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setErrorMsg(null);
-
-    const phoneDigits = phone.replace(/\D/g, "");
-
-    if (!fullName.trim()) {
-      setErrorMsg("Informe seu nome completo.");
+  function handleContinueToPayment() {
+    setError(null);
+    if (fullName.trim().length < 3) {
+      setError("Informe seu nome completo.");
       return;
     }
-    if (!email.trim() || !email.includes("@")) {
-      setErrorMsg("Informe um e-mail válido.");
+    if (!EMAIL_REGEX.test(email.trim())) {
+      setError("Informe um e-mail válido.");
       return;
     }
-    if (phoneDigits.length < 10) {
-      setErrorMsg("Informe um WhatsApp válido com DDD.");
+    if (whatsapp.replace(/\D/g, "").length < 10) {
+      setError("Informe um número de WhatsApp válido, com DDD.");
       return;
     }
     if (!isValidCPF(cpf)) {
-      setErrorMsg("Informe um CPF válido para a emissão do Pix.");
+      setError("Informe um CPF válido (necessário para gerar o Pix).");
       return;
     }
+    setStep("pagamento");
+  }
 
+  async function handlePay() {
+    if (!range?.from || !range?.to) return;
     setLoading(true);
-
+    setError(null);
     try {
-      const response = await fetch("/api/bookings", {
+      const res = await fetch("/api/bookings", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           property_id: property.id,
-          check_in: format(checkIn!, "yyyy-MM-dd"),
-          check_out: format(checkOut!, "yyyy-MM-dd"),
-          guest_name: fullName,
-          guest_email: email,
-          guest_phone: phone,
-          guest_cpf: cpf,
+          check_in: toISODate(range.from),
+          check_out: toISODate(range.to),
+          method,
+          full_name: fullName.trim(),
+          email: email.trim(),
+          whatsapp,
+          cpf,
         }),
       });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Não foi possível criar a reserva.");
 
-      const data = await response.json();
-
-      if (!response.ok) {
-        throw new Error(data.error || "Falha ao gerar o pagamento Pix.");
+      if (method === "cartao" && data.init_point) {
+        window.location.href = data.init_point;
+        return;
       }
-
-      setPixData({
-        qrCodeBase64: data.qr_code_base64,
-        qrCodeCopyPaste: data.qr_code,
-        bookingId: data.booking_id,
-      });
-      setStep("pix_checkout");
-    } catch (err: any) {
-      setErrorMsg(err.message || "Ocorreu um erro ao processar sua reserva.");
+      if (method === "pix") {
+        setPixData({ qr_code: data.qr_code, qr_code_base64: data.qr_code_base64 });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Erro inesperado.");
     } finally {
       setLoading(false);
     }
-  };
+  }
 
   return (
-    <div className="bg-white rounded-2xl border border-gray-200 p-6 shadow-xl w-full max-w-md mx-auto">
-      <div className="mb-4 pb-4 border-b border-gray-100 flex items-baseline justify-between">
-        <div>
-          <span className="text-2xl font-bold text-gray-900">
-            R$ {pricePerNight.toLocaleString("pt-BR")}
-          </span>
-          <span className="text-gray-500 text-sm"> / noite</span>
-        </div>
-        {property.minimo_noites > 1 && (
-          <span className="text-xs font-medium text-amber-700 bg-amber-50 px-2.5 py-1 rounded-full">
-            Mínimo {property.minimo_noites} noites
-          </span>
-        )}
-      </div>
-
-      {errorMsg && (
-        <div className="mb-4 p-3 bg-red-50 border border-red-200 text-red-700 text-sm rounded-xl">
-          {errorMsg}
-        </div>
+    <div className="rounded-xl border border-forest-100 bg-white p-5 shadow-soft max-w-md mx-auto">
+      <p className="font-display text-2xl font-semibold text-ink">
+        {formatBRL(property.preco_semana)}
+        <span className="text-base font-normal text-ink/50"> / diária (semana)</span>
+      </p>
+      <p className="text-sm text-ink/50">
+        {formatBRL(property.preco_fds)} / diária (sexta a domingo)
+      </p>
+      {property.minimo_noites > 1 && (
+        <p className="mt-1 text-xs text-amber-600 font-medium">
+          Estadia mínima: {property.minimo_noites} noites
+        </p>
+      )}
+      {windowEnd && (
+        <p className="mt-1 text-xs text-ink/40">
+          Reservas disponíveis até {formatDate(toISODate(windowEnd))}
+        </p>
       )}
 
-      {/* ETAPA 1: DATAS */}
-      {step === "dates" && (
-        <div className="space-y-4">
-          <div className="overflow-x-auto flex justify-center">
+      {step === "datas" && (
+        <>
+          {/* Container ajustado para remover a barra de scroll cinza */}
+          <div className="mt-4 w-full flex justify-center overflow-hidden">
             <DayPicker
               mode="range"
+              locale={ptBR}
               selected={range}
               onSelect={setRange}
-              locale={ptBR}
-              disabled={[
-                { before: new Date() },
-                ...(maxAvailableDate ? [{ after: maxAvailableDate }] : []),
-                ...parsedBlockedDates,
-                ...disabledDates,
-              ]}
+              disabled={disabledDates}
               numberOfMonths={1}
+              className="!font-sans m-0"
+              style={calendarStyle}
             />
           </div>
 
-          {totalNights > 0 && (
-            <div className="space-y-2 pt-2 border-t text-sm text-gray-600">
-              <div className="flex justify-between">
-                <span>R$ {pricePerNight} x {totalNights} noites</span>
-                <span>R$ {rawSubtotal.toLocaleString("pt-BR")}</span>
+          {pricing && pricing.nightsCount > 0 && (
+            <div className="mt-4 space-y-1 border-t border-forest-100 pt-4 text-sm">
+              <div className="flex justify-between font-medium">
+                <span>
+                  {formatDate(range!.from!)} → {formatDate(range!.to!)} ({pricing.nightsCount}{" "}
+                  noites)
+                </span>
+                <span>{formatBRL(pricing.accommodationSubtotal)}</span>
               </div>
-              {cleaningFee > 0 && (
-                <div className="flex justify-between">
-                  <span>Taxa de limpeza</span>
-                  <span>R$ {cleaningFee.toLocaleString("pt-BR")}</span>
-                </div>
+              <ul className="space-y-0.5 pl-1 text-xs text-ink/50">
+                {pricing.nights.map((n) => (
+                  <li key={n.date} className="flex justify-between">
+                    <span>
+                      {formatDate(n.date)} · {rateSourceLabel(n.source, n.ruleName)}
+                    </span>
+                    <span>{formatBRL(n.rate)}</span>
+                  </li>
+                ))}
+              </ul>
+              <div className="flex justify-between text-ink/60">
+                <span>Taxa de limpeza</span>
+                <span>{formatBRL(pricing.cleaningFee)}</span>
+              </div>
+              <div className="flex justify-between pt-2 font-semibold text-base">
+                <span>Total</span>
+                <span>{formatBRL(pricing.total)}</span>
+              </div>
+              {pricing.nightsCount < pricing.minNightsRequired && (
+                <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700 mt-2">
+                  Este período exige uma estadia mínima de {pricing.minNightsRequired} noites.
+                  Selecione um intervalo maior para continuar.
+                </p>
               )}
-              <div className="flex justify-between font-bold text-gray-900 text-base pt-2 border-t">
-                <span>Total estimado</span>
-                <span>R$ {estimatedTotal.toLocaleString("pt-BR")}</span>
-              </div>
             </div>
           )}
 
+          {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+
           <button
-            onClick={handleAdvanceToGuestInfo}
-            disabled={!checkIn || !checkOut}
-            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 disabled:bg-gray-300 text-white font-semibold rounded-xl transition"
+            onClick={handleContinue}
+            className="mt-4 w-full rounded-full bg-forest-700 py-3 font-medium text-white transition active:scale-[0.98] hover:bg-emerald-800"
           >
-            Continuar para dados de contato
+            Continuar
+          </button>
+        </>
+      )}
+
+      {step === "dados" && (
+        <div className="mt-4 space-y-3">
+          <p className="text-sm text-ink/70">
+            Para gerar o pagamento, precisamos do seu nome completo, e-mail, WhatsApp e CPF
+            (exigido pelo Mercado Pago para o Pix).
+          </p>
+          <label className="block text-sm">
+            Nome completo
+            <input
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-forest-700"
+              value={fullName}
+              onChange={(e) => setFullName(e.target.value)}
+              placeholder="Seu nome completo"
+              autoComplete="name"
+            />
+          </label>
+          <label className="block text-sm">
+            E-mail
+            <input
+              type="email"
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-forest-700"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              placeholder="voce@email.com"
+              autoComplete="email"
+            />
+          </label>
+          <label className="block text-sm">
+            WhatsApp
+            <input
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-forest-700"
+              value={whatsapp}
+              onChange={(e) => handleWhatsappChange(e.target.value)}
+              placeholder="(11) 99999-9999"
+              inputMode="tel"
+            />
+          </label>
+          <label className="block text-sm">
+            CPF
+            <input
+              className="mt-1 w-full rounded-lg border border-forest-100 p-2 text-sm focus:outline-none focus:ring-2 focus:ring-forest-700"
+              value={cpf}
+              onChange={(e) => setCpf(maskCPF(e.target.value))}
+              placeholder="000.000.000-00"
+              inputMode="numeric"
+            />
+          </label>
+
+          {error && <p className="text-sm text-red-600">{error}</p>}
+
+          <button
+            onClick={handleContinueToPayment}
+            className="w-full rounded-full bg-forest-700 py-3 font-medium text-white transition active:scale-[0.98] hover:bg-emerald-800"
+          >
+            Continuar para pagamento
+          </button>
+          <button
+            onClick={() => setStep("datas")}
+            className="w-full text-center text-xs text-ink/50 underline py-1"
+          >
+            Voltar
           </button>
         </div>
       )}
 
-      {/* ETAPA 2: DADOS DO HÓSPEDE (SEM LOGIN SOCIAL) */}
-      {step === "guest_info" && (
-        <form onSubmit={handleGeneratePixPayment} className="space-y-4">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="font-semibold text-gray-900">Seus dados para reserva</h3>
+      {step === "pagamento" && !pixData && (
+        <div className="mt-4 space-y-4">
+          <div className="flex justify-between border-b border-forest-100 pb-3 text-sm font-medium">
+            <span>Total a pagar</span>
+            <span>{formatBRL(pricing?.total ?? 0)}</span>
+          </div>
+
+          <div className="flex gap-2">
             <button
-              type="button"
-              onClick={() => setStep("dates")}
-              className="text-xs text-gray-500 hover:underline"
+              onClick={() => setMethod("pix")}
+              className={`flex-1 rounded-full border py-2 text-sm font-medium transition ${
+                method === "pix"
+                  ? "border-forest-700 bg-forest-700 text-white"
+                  : "border-forest-100 text-ink/70"
+              }`}
             >
-              Alterar datas
+              Pix
+            </button>
+            <button
+              onClick={() => setMethod("cartao")}
+              className={`flex-1 rounded-full border py-2 text-sm font-medium transition ${
+                method === "cartao"
+                  ? "border-forest-700 bg-forest-700 text-white"
+                  : "border-forest-100 text-ink/70"
+              }`}
+            >
+              Cartão de crédito
             </button>
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">Nome Completo</label>
-            <input
-              type="text"
-              required
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              placeholder="Digite seu nome"
-              className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-gray-700 mb-1">E-mail</label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="seuemail@exemplo.com"
-              className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-            />
-          </div>
-
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">WhatsApp</label>
-              <input
-                type="text"
-                required
-                value={phone}
-                onChange={(e) => handlePhoneChange(e.target.value)}
-                placeholder="(00) 90000-0000"
-                className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-              />
-            </div>
-            <div>
-              <label className="block text-xs font-medium text-gray-700 mb-1">CPF</label>
-              <input
-                type="text"
-                required
-                value={cpf}
-                onChange={(e) => setCpf(maskCPF(e.target.value))}
-                placeholder="000.000.000-00"
-                className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
-              />
-            </div>
-          </div>
+          {error && <p className="text-sm text-red-600">{error}</p>}
 
           <button
-            type="submit"
+            onClick={handlePay}
             disabled={loading}
-            className="w-full py-3.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-xl transition flex items-center justify-center gap-2 disabled:opacity-50"
+            className="w-full rounded-full bg-amber-500 py-3 font-medium text-white transition active:scale-[0.98] disabled:opacity-60 hover:bg-amber-600"
           >
-            {loading ? "Gerando Pix..." : "Pagar com Pix"}
+            {loading ? "Gerando pagamento..." : "Pagar agora"}
           </button>
-        </form>
+          <button
+            onClick={() => setStep("dados")}
+            className="w-full text-center text-xs text-ink/50 underline py-1"
+          >
+            Voltar
+          </button>
+        </div>
       )}
 
-      {/* ETAPA 3: PAGAMENTO PIX */}
-      {step === "pix_checkout" && pixData && (
-        <div className="text-center space-y-4">
-          <h3 className="font-bold text-gray-900 text-lg">Pagamento via Pix</h3>
-          <p className="text-xs text-gray-500">
-            Escaneie o QR Code abaixo ou copie o código Pix para finalizar sua reserva.
+      {pixData && (
+        <div className="mt-4 space-y-3 text-center">
+          <p className="text-sm text-ink/70">
+            Escaneie o QR Code ou use o Pix Copia e Cola. A reserva é confirmada
+            automaticamente após a aprovação do pagamento.
           </p>
-
-          {pixData.qrCodeBase64 && (
-            <div className="flex justify-center py-2">
-              <img
-                src={`data:image/png;base64,${pixData.qrCodeBase64}`}
-                alt="QR Code Pix"
-                className="w-48 h-48 border p-2 rounded-xl"
-              />
-            </div>
+          {pixData.qr_code_base64 && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={`data:image/png;base64,${pixData.qr_code_base64}`}
+              alt="QR Code Pix"
+              className="mx-auto h-56 w-56 rounded-xl border border-forest-100 p-2"
+            />
           )}
-
-          {pixData.qrCodeCopyPaste && (
-            <button
-              type="button"
-              onClick={() => {
-                navigator.clipboard.writeText(pixData.qrCodeCopyPaste!);
-                alert("Código Pix Copia e Cola copiado!");
-              }}
-              className="w-full py-2.5 bg-gray-100 hover:bg-gray-200 text-gray-800 text-xs font-semibold rounded-lg transition"
-            >
-              Copiar Código Pix (Copia e Cola)
-            </button>
+          {pixData.qr_code && (
+            <textarea
+              readOnly
+              value={pixData.qr_code}
+              className="h-20 w-full resize-none rounded-lg border border-forest-100 p-2 text-xs focus:outline-none"
+              onFocus={(e) => e.currentTarget.select()}
+            />
           )}
         </div>
       )}
