@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { payment } from "@/lib/mercadopago";
+import { mpPayment } from "@/lib/mercadopago";
 
 export async function POST(request: Request) {
   try {
@@ -16,7 +16,7 @@ export async function POST(request: Request) {
       cpf,
     } = body;
 
-    // 1. Sanitização dos dados (apenas números para CPF e telefone)
+    // 1. Sanitização dos dados (somente números no CPF e WhatsApp)
     const cleanCpf = cpf ? cpf.replace(/\D/g, "") : "";
     const cleanPhone = whatsapp ? whatsapp.replace(/\D/g, "") : "";
     const cleanEmail = email ? email.trim() : "";
@@ -44,7 +44,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Criar registro da reserva
+    // 3. Criar registro da reserva no banco Supabase
     const { data: booking, error: bookingError } = await supabase
       .from("bookings")
       .insert({
@@ -74,7 +74,7 @@ export async function POST(request: Request) {
       const firstName = nameParts[0];
       const lastName = nameParts.slice(1).join(" ") || "Hospede";
 
-      const paymentResponse = await payment.create({
+      const paymentResponse = await mpPayment.create({
         body: {
           transaction_amount: Number(booking.total_price || property.price_per_night),
           description: `Reserva: ${property.title}`,
