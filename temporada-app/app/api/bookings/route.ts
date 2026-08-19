@@ -3,7 +3,6 @@ import { createAdminClient } from "@/lib/supabase/server";
 import { createCardPreference, MercadoPagoRequestError } from "@/lib/mercadopago";
 import { calculatePricing } from "@/lib/pricing";
 import { isWithinAvailabilityWindow } from "@/lib/availability";
-import { splitFullName } from "@/lib/utils";
 import { isValidBrazilianPhone, unmaskDigits } from "@/lib/phoneMask";
 import { isValidCPF, unmaskCPFDigits } from "@/lib/cpfMask";
 
@@ -121,25 +120,55 @@ export async function POST(request: Request) {
 
   try {
     if (method === "pix") {
-      const pref = await createCardPreference({
-        amount: pricing.total,
-        title: `Reserva - ${property.name}`,
-        payerEmail: cleanEmail,
-        bookingId: booking.id,
+      const nameParts = cleanName.split(/\s+/);
+      const firstName = nameParts[0] || "Hospede";
+      const lastName = nameParts.slice(1).join(" ") || "Cliente";
+
+      // Chamada direta via fetch com o token configurado
+      const mpResponse = await fetch("https://api.mercadopago.com/v1/payments", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+        },
+        body: JSON.stringify({
+          transaction_amount: Number(pricing.total.toFixed(2)),
+          description: `Reserva - ${property.name}`,
+          payment_method_id: "pix",
+          external_reference: booking.id,
+          payer: {
+            email: cleanEmail,
+            first_name: firstName,
+            last_name: lastName,
+            identification: {
+              type: "CPF",
+              number: cleanCpf,
+            },
+          },
+        }),
       });
+
+      const mpData = await mpResponse.json();
+
+      if (!mpResponse.ok) {
+        throw new Error(mpData.message || "Erro no Mercado Pago");
+      }
+
+      const pixInfo = mpData.point_of_interaction?.transaction_data;
 
       await admin.from("payments").insert({
         booking_id: booking.id,
-        mp_preference_id: pref.id,
+        mp_payment_id: String(mpData.id),
         method: "pix",
-        status: "pending",
+        status: mpData.status ?? "pending",
         amount: pricing.total,
       });
 
       return NextResponse.json({
         booking_id: booking.id,
         total: pricing.total,
-        init_point: pref.init_point,
+        qr_code: pixInfo?.qr_code,
+        qr_code_base64: pixInfo?.qr_code_base64,
       });
     }
 
@@ -163,15 +192,12 @@ export async function POST(request: Request) {
       total: pricing.total,
       init_point: pref.init_point,
     });
-  } catch (error) {
+  } catch (error: any) {
     await admin.from("bookings").delete().eq("id", booking.id);
-
-    const message =
-      error instanceof MercadoPagoRequestError
-        ? error.message
-        : "Erro ao gerar pagamento no Mercado Pago.";
-
     console.error("Falha ao gerar pagamento:", error);
-    return NextResponse.json({ error: message }, { status: 500 });
+    return NextResponse.json(
+      { error: error.message || "Erro ao gerar pagamento no Mercado Pago." },
+      { status: 500 }
+    );
   }
 }
