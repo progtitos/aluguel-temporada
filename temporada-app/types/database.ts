@@ -19,6 +19,7 @@ export type Property = {
   preco_fds: number;
   cleaning_fee: number;
   minimo_noites: number;
+  janela_disponibilidade_meses: number | null;
   checkin_time: string;
   checkout_time: string;
   max_guests: number;
