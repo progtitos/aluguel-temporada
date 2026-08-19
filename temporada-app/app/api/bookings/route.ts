@@ -45,22 +45,20 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Montar objeto da reserva com tipagem solta para o Supabase insert
-    const bookingPayload: Record<string, any> = {
-      property_id,
-      check_in,
-      check_out,
-      full_name: cleanName,
-      email: cleanEmail,
-      whatsapp: cleanPhone,
-      cpf: cleanCpf,
-      status: "pendente",
-      payment_method: method,
-    };
-
+    // 3. Inserção com cast seguro para o tipo esperado pelo Supabase Client
     const { data: booking, error: bookingError } = await supabase
       .from("bookings")
-      .insert([bookingPayload])
+      .insert({
+        property_id,
+        check_in,
+        check_out,
+        full_name: cleanName,
+        email: cleanEmail,
+        whatsapp: cleanPhone,
+        cpf: cleanCpf,
+        status: "pendente",
+        payment_method: method,
+      } as any)
       .select()
       .single();
 
