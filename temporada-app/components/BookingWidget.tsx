@@ -16,10 +16,6 @@ type Step = "datas" | "dados" | "pagamento";
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-// O tamanho do CÍRCULO de cada dia encolhe em telas estreitas (clamp),
-// mas a largura da CÉLULA/coluna é controlada globalmente em globals.css
-// (table-layout: fixed + width: 100%), garantindo 7 colunas sempre iguais
-// e visíveis por inteiro, do "dom" ao "sáb", sem cortar nada no desktop.
 const calendarStyle: CSSProperties = {
   ["--rdp-day_button-width" as string]: "clamp(1.9rem, 8vw, 2.5rem)",
   ["--rdp-day_button-height" as string]: "clamp(1.9rem, 8vw, 2.5rem)",
@@ -39,10 +35,6 @@ export default function BookingWidget({
   const [method, setMethod] = useState<"pix" | "cartao">("pix");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [pixData, setPixData] = useState<{
-    qr_code?: string;
-    qr_code_base64?: string;
-  } | null>(null);
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -55,9 +47,6 @@ export default function BookingWidget({
   );
 
   const disabledDates = useMemo(() => {
-    // A janela de disponibilidade do imóvel se soma aos bloqueios manuais
-    // (reservas confirmadas/pendentes e bloqueios do admin) — nunca os
-    // substitui: ambos ficam desabilitados juntos no mesmo calendário.
     const matchers: Matcher[] = [
       { before: new Date() },
       ...blockedRanges.map((b) => ({
@@ -130,12 +119,10 @@ export default function BookingWidget({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Não foi possível criar a reserva.");
 
-      if (method === "cartao" && data.init_point) {
+      // Redireciona para o Checkout Pro do Mercado Pago (Pix ou Cartão)
+      if (data.init_point) {
         window.location.href = data.init_point;
         return;
-      }
-      if (method === "pix") {
-        setPixData({ qr_code: data.qr_code, qr_code_base64: data.qr_code_base64 });
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Erro inesperado.");
@@ -291,7 +278,7 @@ export default function BookingWidget({
         </div>
       )}
 
-      {step === "pagamento" && !pixData && (
+      {step === "pagamento" && (
         <div className="mt-4 space-y-4">
           <div className="flex justify-between border-b border-forest-100 pb-3 text-sm font-medium">
             <span>Total a pagar</span>
@@ -336,31 +323,6 @@ export default function BookingWidget({
           >
             Voltar
           </button>
-        </div>
-      )}
-
-      {pixData && (
-        <div className="mt-4 space-y-3 text-center">
-          <p className="text-sm text-ink/70">
-            Escaneie o QR Code ou use o Pix Copia e Cola. A reserva é confirmada
-            automaticamente após a aprovação do pagamento.
-          </p>
-          {pixData.qr_code_base64 && (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img
-              src={`data:image/png;base64,${pixData.qr_code_base64}`}
-              alt="QR Code Pix"
-              className="mx-auto h-56 w-56 rounded-xl border border-forest-100"
-            />
-          )}
-          {pixData.qr_code && (
-            <textarea
-              readOnly
-              value={pixData.qr_code}
-              className="h-20 w-full resize-none rounded-lg border border-forest-100 p-2 text-xs"
-              onFocus={(e) => e.currentTarget.select()}
-            />
-          )}
         </div>
       )}
     </div>
