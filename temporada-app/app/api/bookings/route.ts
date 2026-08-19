@@ -76,13 +76,14 @@ export async function POST(request: Request) {
       const firstName = nameParts[0];
       const lastName = nameParts.slice(1).join(" ") || "Hospede";
 
-      // Uso do campo correto do banco: booking.total_amount
-      const transactionAmount = Number((booking as any).total_amount || (booking as any).total_price || property.price_per_night);
+      // Leitura flexível do valor total ou da diária
+      const propPrice = (property as any).price_per_day || (property as any).price || (property as any).price_per_night || 0;
+      const transactionAmount = Number((booking as any).total_amount || (booking as any).total_price || propPrice);
 
       const paymentResponse = await mpPayment.create({
         body: {
           transaction_amount: transactionAmount,
-          description: `Reserva: ${property.title}`,
+          description: `Reserva: ${(property as any).title || (property as any).name}`,
           payment_method_id: "pix",
           payer: {
             email: cleanEmail,
