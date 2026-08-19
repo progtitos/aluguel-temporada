@@ -1,4 +1,5 @@
 import { MercadoPagoConfig, Payment, Preference } from "mercadopago";
+import { getPublicSiteUrl } from "@/lib/siteUrl";
 
 const client = new MercadoPagoConfig({
   accessToken: process.env.MP_ACCESS_TOKEN!,
@@ -14,14 +15,15 @@ export class MercadoPagoRequestError extends Error {
   }
 }
 
+function extractMpMessage(error: unknown): string | undefined {
+  return (
+    (error as { cause?: { message?: string } })?.cause?.message ??
+    (error as Error)?.message
+  );
+}
+
 /**
  * Cria um pagamento Pix direto (QR Code + copia-e-cola).
- *
- * BUG CORRIGIDO: o Mercado Pago rejeita a criação de um pagamento Pix
- * (erro 400 "invalid payer identification" / "invalid parameter") quando
- * o payload não inclui `payer.first_name`, `payer.last_name` e
- * `payer.identification` (CPF). Antes só enviávamos `payer.email`, o que
- * derrubava a chamada e caía no catch genérico da rota de checkout.
  */
 export async function createPixPayment(params: {
   amount: number;
@@ -32,6 +34,9 @@ export async function createPixPayment(params: {
   payerCpf: string;
   bookingId: string;
 }) {
+  const siteUrl = getPublicSiteUrl();
+  const notificationUrl = siteUrl ? `${siteUrl}/api/mercadopago/webhook` : undefined;
+
   try {
     const result = await mpPayment.create({
       body: {
@@ -48,7 +53,7 @@ export async function createPixPayment(params: {
           },
         },
         external_reference: params.bookingId,
-        notification_url: `${process.env.NEXT_PUBLIC_SITE_URL}/api/mercadopago/webhook`,
+        ...(notificationUrl ? { notification_url: notificationUrl } : {}),
       },
     });
 
@@ -69,12 +74,9 @@ export async function createPixPayment(params: {
       ticket_url: result.point_of_interaction?.transaction_data?.ticket_url,
     };
   } catch (error) {
-    // Propaga a causa real (em vez de um erro genérico) para facilitar o
-    // diagnóstico em logs da Vercel — a mensagem da API do MP costuma
-    // apontar exatamente qual campo do payload está inválido/faltando.
-    const mpMessage =
-      (error as { cause?: { message?: string }; message?: string })?.cause?.message ??
-      (error as Error)?.message;
+    if (error instanceof MercadoPagoRequestError) throw error;
+
+    const mpMessage = extractMpMessage(error);
     throw new MercadoPagoRequestError(
       mpMessage ? `Mercado Pago (Pix): ${mpMessage}` : "Falha ao gerar pagamento Pix.",
       error
@@ -84,7 +86,6 @@ export async function createPixPayment(params: {
 
 /**
  * Cria uma Preference (Checkout Pro) para pagamento com cartão de crédito.
- * O hóspede é redirecionado para o checkout hospedado do Mercado Pago.
  */
 export async function createCardPreference(params: {
   amount: number;
@@ -92,6 +93,16 @@ export async function createCardPreference(params: {
   payerEmail: string;
   bookingId: string;
 }) {
+  const siteUrl = getPublicSiteUrl();
+  const notificationUrl = siteUrl ? `${siteUrl}/api/mercadopago/webhook` : undefined;
+  const backUrls = siteUrl
+    ? {
+        success: `${siteUrl}/reserva/${params.bookingId}`,
+        pending: `${siteUrl}/reserva/${params.bookingId}`,
+        failure: `${siteUrl}/reserva/${params.bookingId}`,
+      }
+    : undefined;
+
   try {
     const result = await mpPreference.create({
       body: {
@@ -106,13 +117,8 @@ export async function createCardPreference(params: {
         ],
         payer: { email: params.payerEmail },
         external_reference: params.bookingId,
-        notification_url: `${process.env.NEXT_PUBLIC_SITE_URL}/api/mercadopago/webhook`,
-        back_urls: {
-          success: `${process.env.NEXT_PUBLIC_SITE_URL}/reserva/${params.bookingId}`,
-          pending: `${process.env.NEXT_PUBLIC_SITE_URL}/reserva/${params.bookingId}`,
-          failure: `${process.env.NEXT_PUBLIC_SITE_URL}/reserva/${params.bookingId}`,
-        },
-        auto_return: "approved",
+        ...(notificationUrl ? { notification_url: notificationUrl } : {}),
+        ...(backUrls ? { back_urls: backUrls, auto_return: "approved" as const } : {}),
         payment_methods: {
           excluded_payment_types: [{ id: "ticket" }],
         },
@@ -121,9 +127,7 @@ export async function createCardPreference(params: {
 
     return { id: result.id, init_point: result.init_point };
   } catch (error) {
-    const mpMessage =
-      (error as { cause?: { message?: string }; message?: string })?.cause?.message ??
-      (error as Error)?.message;
+    const mpMessage = extractMpMessage(error);
     throw new MercadoPagoRequestError(
       mpMessage ? `Mercado Pago (Cartão): ${mpMessage}` : "Falha ao gerar preferência de pagamento.",
       error
