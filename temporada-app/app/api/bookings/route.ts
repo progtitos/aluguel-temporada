@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
-import { createCardPreference, createPixPayment, MercadoPagoRequestError } from "@/lib/mercadopago";
+import { createCardPreference, MercadoPagoRequestError } from "@/lib/mercadopago";
 import { calculatePricing } from "@/lib/pricing";
 import { isWithinAvailabilityWindow } from "@/lib/availability";
 import { splitFullName } from "@/lib/utils";
@@ -35,7 +35,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Dados incompletos." }, { status: 400 });
   }
 
-  // Dados do hóspede coletados no checkout e validados no servidor
   if (!full_name || full_name.trim().length < 3) {
     return NextResponse.json({ error: "Informe o nome completo." }, { status: 400 });
   }
@@ -65,7 +64,6 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Imóvel não encontrado." }, { status: 404 });
   }
 
-  // Reforça no servidor a janela de disponibilidade
   if (!isWithinAvailabilityWindow(check_out, property.janela_disponibilidade_meses)) {
     return NextResponse.json(
       {
@@ -83,7 +81,6 @@ export async function POST(request: Request) {
     .select("*")
     .eq("property_id", property_id);
 
-  // Recálculo seguro das tarifas
   const pricing = calculatePricing(property, pricingRules ?? [], check_in, check_out);
 
   if (pricing.nightsCount < 1) {
@@ -98,7 +95,6 @@ export async function POST(request: Request) {
     );
   }
 
-  // Registra reserva no banco de dados
   const { data: booking, error: bookingError } = await admin
     .from("bookings")
     .insert({
@@ -124,28 +120,58 @@ export async function POST(request: Request) {
   }
 
   try {
-   // Altere apenas o bloco "if (method === 'pix')" dentro do seu try/catch:
+    if (method === "pix") {
+      const pref = await createCardPreference({
+        amount: pricing.total,
+        title: `Reserva - ${property.name}`,
+        payerEmail: cleanEmail,
+        bookingId: booking.id,
+      });
 
-if (method === "pix") {
-  // Gera a preferência de checkout no Mercado Pago (evita a trava de política da API Transparente)
-  const pref = await createCardPreference({
-    amount: pricing.total,
-    title: `Reserva - ${property.name}`,
-    payerEmail: cleanEmail,
-    bookingId: booking.id,
-  });
+      await admin.from("payments").insert({
+        booking_id: booking.id,
+        mp_preference_id: pref.id,
+        method: "pix",
+        status: "pending",
+        amount: pricing.total,
+      });
 
-  await admin.from("payments").insert({
-    booking_id: booking.id,
-    mp_preference_id: pref.id,
-    method: "pix",
-    status: "pending",
-    amount: pricing.total,
-  });
+      return NextResponse.json({
+        booking_id: booking.id,
+        total: pricing.total,
+        init_point: pref.init_point,
+      });
+    }
 
-  return NextResponse.json({
-    booking_id: booking.id,
-    total: pricing.total,
-    init_point: pref.init_point, // Redireciona para o Checkout onde o Pix é liberado
-  });
+    const pref = await createCardPreference({
+      amount: pricing.total,
+      title: `Reserva - ${property.name}`,
+      payerEmail: cleanEmail,
+      bookingId: booking.id,
+    });
+
+    await admin.from("payments").insert({
+      booking_id: booking.id,
+      mp_preference_id: pref.id,
+      method: "credit_card",
+      status: "pending",
+      amount: pricing.total,
+    });
+
+    return NextResponse.json({
+      booking_id: booking.id,
+      total: pricing.total,
+      init_point: pref.init_point,
+    });
+  } catch (error) {
+    await admin.from("bookings").delete().eq("id", booking.id);
+
+    const message =
+      error instanceof MercadoPagoRequestError
+        ? error.message
+        : "Erro ao gerar pagamento no Mercado Pago.";
+
+    console.error("Falha ao gerar pagamento:", error);
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
 }
