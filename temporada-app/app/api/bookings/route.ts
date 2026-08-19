@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { mercadopago } from "@/lib/mercadopago";
+import { payment } from "@/lib/mercadopago";
 
 export async function POST(request: Request) {
   try {
@@ -16,12 +16,11 @@ export async function POST(request: Request) {
       cpf,
     } = body;
 
-    // 1. Sanitização dos dados (somente números no CPF e WhatsApp)
+    // 1. Sanitização dos dados (apenas números para CPF e telefone)
     const cleanCpf = cpf ? cpf.replace(/\D/g, "") : "";
     const cleanPhone = whatsapp ? whatsapp.replace(/\D/g, "") : "";
     const cleanEmail = email ? email.trim() : "";
 
-    // Validação básica dos campos obrigatórios
     if (!property_id || !check_in || !check_out || !cleanCpf || !cleanEmail) {
       return NextResponse.json(
         { error: "Dados incompletos para processar a reserva." },
@@ -45,7 +44,7 @@ export async function POST(request: Request) {
       );
     }
 
-    // 3. Criar registro da reserva no banco Supabase
+    // 3. Criar registro da reserva
     const { data: booking, error: bookingError } = await supabase
       .from("bookings")
       .insert({
@@ -69,13 +68,13 @@ export async function POST(request: Request) {
       );
     }
 
-    // 4. Integração com Mercado Pago (PIX)
+    // 4. Integração Pix via Mercado Pago SDK
     if (method === "pix") {
       const nameParts = full_name.trim().split(" ");
       const firstName = nameParts[0];
       const lastName = nameParts.slice(1).join(" ") || "Hospede";
 
-      const paymentResponse = await mercadopago.payment.create({
+      const paymentResponse = await payment.create({
         body: {
           transaction_amount: Number(booking.total_price || property.price_per_night),
           description: `Reserva: ${property.title}`,
