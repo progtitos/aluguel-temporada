@@ -6,12 +6,12 @@ import { ptBR } from "date-fns/locale";
 import { DayPicker, DateRange } from "react-day-picker";
 import "react-day-picker/dist/style.css";
 import { Property, PricingRule } from "@/types/database";
-import { maskPhone, isValidPhone } from "@/lib/phoneMask";
 import { maskCPF, isValidCPF } from "@/lib/cpfMask";
 
+// Estrutura enviada pelo app/imovel/[slug]/page.tsx
 interface BlockedRange {
-  start: Date;
-  end: Date;
+  check_in: string;
+  check_out: string;
 }
 
 interface BookingWidgetProps {
@@ -36,7 +36,7 @@ export default function BookingWidget({
   const [phone, setPhone] = useState("");
   const [cpf, setCpf] = useState("");
 
-  // Estados de processamento e resposta do Pix
+  // Estados do Pix
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [pixData, setPixData] = useState<{
@@ -45,20 +45,39 @@ export default function BookingWidget({
     bookingId?: string;
   } | null>(null);
 
+  // Formatação simples e nativa de Telefone / WhatsApp
+  const handlePhoneChange = (v: string) => {
+    const digits = v.replace(/\D/g, "").slice(0, 11);
+    let formatted = digits;
+    if (digits.length > 2) {
+      formatted = `(${digits.slice(0, 2)}) ${digits.slice(2)}`;
+    }
+    if (digits.length > 7) {
+      formatted = `(${digits.slice(0, 2)}) ${digits.slice(2, 7)}-${digits.slice(7)}`;
+    }
+    setPhone(formatted);
+  };
+
   const checkIn = range?.from;
   const checkOut = range?.to;
   const totalNights = checkIn && checkOut ? differenceInDays(checkOut, checkIn) : 0;
 
-  // Cálculo básico de valor estimado
+  // Cálculo financeiro
   const pricePerNight = property.preco_semana || 0;
   const rawSubtotal = totalNights * pricePerNight;
   const cleaningFee = property.cleaning_fee || 0;
   const estimatedTotal = rawSubtotal + cleaningFee;
 
-  // Validação da Janela de Disponibilidade
+  // Janela de Disponibilidade
   const maxAvailableDate = property.janela_disponibilidade_meses
     ? new Date(new Date().setMonth(new Date().getMonth() + property.janela_disponibilidade_meses))
     : undefined;
+
+  // Converte blockedRanges para desabilitar datas no DayPicker
+  const parsedBlockedDates = blockedRanges.map((b) => ({
+    from: new Date(b.check_in),
+    to: new Date(b.check_out),
+  }));
 
   const handleAdvanceToGuestInfo = () => {
     setErrorMsg(null);
@@ -77,6 +96,8 @@ export default function BookingWidget({
     e.preventDefault();
     setErrorMsg(null);
 
+    const phoneDigits = phone.replace(/\D/g, "");
+
     if (!fullName.trim()) {
       setErrorMsg("Informe seu nome completo.");
       return;
@@ -85,7 +106,7 @@ export default function BookingWidget({
       setErrorMsg("Informe um e-mail válido.");
       return;
     }
-    if (!isValidPhone(phone)) {
+    if (phoneDigits.length < 10) {
       setErrorMsg("Informe um WhatsApp válido com DDD.");
       return;
     }
@@ -152,7 +173,7 @@ export default function BookingWidget({
         </div>
       )}
 
-      {/* ETAPA 1: SELEÇÃO DE DATAS */}
+      {/* ETAPA 1: DATAS */}
       {step === "dates" && (
         <div className="space-y-4">
           <div className="overflow-x-auto flex justify-center">
@@ -164,6 +185,7 @@ export default function BookingWidget({
               disabled={[
                 { before: new Date() },
                 ...(maxAvailableDate ? [{ after: maxAvailableDate }] : []),
+                ...parsedBlockedDates,
                 ...disabledDates,
               ]}
               numberOfMonths={1}
@@ -244,7 +266,7 @@ export default function BookingWidget({
                 type="text"
                 required
                 value={phone}
-                onChange={(e) => setPhone(maskPhone(e.target.value))}
+                onChange={(e) => handlePhoneChange(e.target.value)}
                 placeholder="(00) 90000-0000"
                 className="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-emerald-500 outline-none"
               />
