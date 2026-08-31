@@ -22,6 +22,7 @@ Custo de infraestrutura: **R$ 0** (todos os planos free tier).
    - `06_minimo_noites.sql` (estadia mínima configurável por imóvel)
    - `07_guest_cpf.sql` (CPF do hóspede — exigido pelo Mercado Pago para gerar o Pix)
    - `08_janela_disponibilidade.sql` (janela de disponibilidade do calendário — 1/2/3 meses ou sem limite)
+   - `09_coupons.sql` (cupons de desconto — tabela `coupons`, colunas de cupom em `bookings` e o trigger que consome o uso ao confirmar a reserva)
 
    ⚠️ **Atenção**: o arquivo `05` **remove a coluna `price_per_night`** (substituída por `preco_semana`/`preco_fds`). Rode os arquivos em ordem, sempre antes de fazer deploy do código correspondente.
 

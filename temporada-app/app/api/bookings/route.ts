@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { createCardPreference, MercadoPagoRequestError } from "@/lib/mercadopago";
 import { calculatePricing } from "@/lib/pricing";
+import { evaluateCoupon } from "@/lib/coupons";
 import { isWithinAvailabilityWindow } from "@/lib/availability";
 import { isValidBrazilianPhone, unmaskDigits } from "@/lib/phoneMask";
 import { isValidCPF, unmaskCPFDigits } from "@/lib/cpfMask";
@@ -19,6 +20,7 @@ export async function POST(request: Request) {
     email,
     whatsapp,
     cpf,
+    coupon_code,
   } = body as {
     property_id: string;
     check_in: string;
@@ -28,6 +30,7 @@ export async function POST(request: Request) {
     email: string;
     whatsapp: string;
     cpf: string;
+    coupon_code?: string;
   };
 
   if (!property_id || !check_in || !check_out) {
@@ -94,6 +97,36 @@ export async function POST(request: Request) {
     );
   }
 
+  // Cupom SEMPRE revalidado aqui, contra o registro mais atual no banco —
+  // nunca confiamos no `discount_amount` calculado no client. Isso evita
+  // que alguém aplique um cupom expirado/esgotado/inativo manipulando a
+  // chamada à API diretamente.
+  let discountAmount = 0;
+  let normalizedCouponCode: string | null = null;
+
+  if (coupon_code && coupon_code.trim()) {
+    normalizedCouponCode = coupon_code.trim().toUpperCase();
+
+    const { data: coupon } = await admin
+      .from("coupons")
+      .select("*")
+      .eq("code", normalizedCouponCode)
+      .maybeSingle();
+
+    const evaluation = evaluateCoupon(coupon, {
+      nightsCount: pricing.nightsCount,
+      totalBeforeDiscount: pricing.total,
+    });
+
+    if (!evaluation.valid) {
+      return NextResponse.json({ error: evaluation.error }, { status: 400 });
+    }
+
+    discountAmount = evaluation.discountAmount;
+  }
+
+  const finalTotal = Number((pricing.total - discountAmount).toFixed(2));
+
   const { data: booking, error: bookingError } = await admin
     .from("bookings")
     .insert({
@@ -105,7 +138,9 @@ export async function POST(request: Request) {
       guest_cpf: cleanCpf,
       check_in,
       check_out,
-      total_amount: pricing.total,
+      total_amount: finalTotal,
+      coupon_code: normalizedCouponCode,
+      discount_amount: discountAmount,
       status: "pendente",
     })
     .select()
@@ -121,7 +156,7 @@ export async function POST(request: Request) {
   try {
     // Redireciona via Checkout Pro para evitar a trava de política da API transparente
     const pref = await createCardPreference({
-      amount: pricing.total,
+      amount: finalTotal,
       title: `Reserva - ${property.name}`,
       payerEmail: cleanEmail,
       bookingId: booking.id,
@@ -132,12 +167,12 @@ export async function POST(request: Request) {
       mp_preference_id: pref.id,
       method: method === "pix" ? "pix" : "credit_card",
       status: "pending",
-      amount: pricing.total,
+      amount: finalTotal,
     });
 
     return NextResponse.json({
       booking_id: booking.id,
-      total: pricing.total,
+      total: finalTotal,
       init_point: pref.init_point,
     });
   } catch (error: any) {

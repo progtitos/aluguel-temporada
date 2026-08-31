@@ -51,6 +51,8 @@ export type Booking = {
   check_out: string;
   total_amount: number;
   status: BookingStatus;
+  coupon_code: string | null;
+  discount_amount: number;
   created_at: string;
 };
 
@@ -63,6 +65,21 @@ export type Payment = {
   status: string;
   amount: number;
   raw_payload: Record<string, unknown> | null;
+  created_at: string;
+};
+
+export type CouponType = "fixed" | "percentage";
+
+export type Coupon = {
+  id: string;
+  code: string;
+  type: CouponType;
+  value: number;
+  is_active: boolean;
+  usage_limit: number;
+  used_count: number;
+  valid_until: string | null;
+  min_nights: number | null;
   created_at: string;
 };
 
@@ -106,6 +123,12 @@ export type Database = {
         Row: Profile;
         Insert: Partial<Profile>;
         Update: Partial<Profile>;
+        Relationships: [];
+      };
+      coupons: {
+        Row: Coupon;
+        Insert: Partial<Coupon>;
+        Update: Partial<Coupon>;
         Relationships: [];
       };
     };

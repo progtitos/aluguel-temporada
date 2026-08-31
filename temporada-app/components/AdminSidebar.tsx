@@ -29,6 +29,9 @@ export default function AdminSidebar() {
         <Link href="/admin" className={linkClass(pathname === "/admin")}>
           Visão geral
         </Link>
+        <Link href="/admin/cupons" className={linkClass(pathname === "/admin/cupons")}>
+          Cupons
+        </Link>
         <p className="px-3 pt-3 text-xs uppercase tracking-wide text-ink/40">Imóveis</p>
         {properties.map((p) => (
           <Link

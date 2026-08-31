@@ -51,7 +51,7 @@ supabase/                              SQL: schema, RLS, storage, seed, migratio
 
 `01_schema.sql` → `02_rls_policies.sql` → `03_storage.sql` → `04_seed.sql` (opcional) →
 `05_pricing_checkin_and_profiles.sql` → `06_minimo_noites.sql` → `07_guest_cpf.sql` →
-`08_janela_disponibilidade.sql`
+`08_janela_disponibilidade.sql` → `09_coupons.sql`
 
 Detalhes de cada uma no `SETUP.md`.
 

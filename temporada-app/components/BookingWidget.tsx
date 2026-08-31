@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type CSSProperties } from "react";
+import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { DayPicker, type DateRange, type Matcher } from "react-day-picker";
 import "react-day-picker/style.css";
 import { ptBR } from "@/lib/dateLocale";
@@ -40,6 +40,13 @@ export default function BookingWidget({
   const [whatsapp, setWhatsapp] = useState("");
   const [cpf, setCpf] = useState("");
 
+  const [couponInput, setCouponInput] = useState("");
+  const [appliedCoupon, setAppliedCoupon] = useState<{ code: string; discountAmount: number } | null>(
+    null
+  );
+  const [couponError, setCouponError] = useState<string | null>(null);
+  const [couponLoading, setCouponLoading] = useState(false);
+
   const windowEnd = useMemo(
     () => getAvailabilityWindowEnd(property.janela_disponibilidade_meses),
     [property.janela_disponibilidade_meses]
@@ -61,6 +68,56 @@ export default function BookingWidget({
     if (!range?.from || !range?.to) return null;
     return calculatePricing(property, pricingRules, toISODate(range.from), toISODate(range.to));
   }, [range, property, pricingRules]);
+
+  const finalTotal = pricing ? pricing.total - (appliedCoupon?.discountAmount ?? 0) : 0;
+
+  // Se o hóspede mudar as datas depois de aplicar um cupom, o desconto
+  // calculado (que depende do total/noites) fica desatualizado — melhor
+  // pedir para reaplicar do que arriscar mostrar um valor incorreto.
+  useEffect(() => {
+    setAppliedCoupon(null);
+    setCouponError(null);
+  }, [range?.from, range?.to]);
+
+  async function applyCoupon() {
+    setCouponError(null);
+    if (!couponInput.trim()) {
+      setCouponError("Informe um código de cupom.");
+      return;
+    }
+    if (!pricing || pricing.nightsCount < 1) {
+      setCouponError("Selecione as datas antes de aplicar o cupom.");
+      return;
+    }
+
+    setCouponLoading(true);
+    try {
+      const res = await fetch("/api/coupons/validate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          code: couponInput.trim(),
+          nights_count: pricing.nightsCount,
+          total_before_discount: pricing.total,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Cupom inválido.");
+
+      setAppliedCoupon({ code: data.code, discountAmount: data.discount_amount });
+    } catch (e) {
+      setAppliedCoupon(null);
+      setCouponError(e instanceof Error ? e.message : "Não foi possível validar o cupom.");
+    } finally {
+      setCouponLoading(false);
+    }
+  }
+
+  function removeCoupon() {
+    setAppliedCoupon(null);
+    setCouponInput("");
+    setCouponError(null);
+  }
 
   function handleContinue() {
     setError(null);
@@ -110,6 +167,7 @@ export default function BookingWidget({
           email: email.trim(),
           whatsapp,
           cpf,
+          coupon_code: appliedCoupon?.code,
         }),
       });
 
@@ -185,9 +243,47 @@ export default function BookingWidget({
                 <span>Taxa de limpeza</span>
                 <span>{formatBRL(pricing.cleaningFee)}</span>
               </div>
+
+              {/* Cupom de desconto */}
+              <div className="border-t border-forest-100 pt-3">
+                {!appliedCoupon ? (
+                  <div className="flex gap-2">
+                    <input
+                      className="min-w-0 flex-1 rounded-lg border border-forest-100 p-2 text-sm uppercase"
+                      placeholder="Código do cupom"
+                      value={couponInput}
+                      onChange={(e) => setCouponInput(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && applyCoupon()}
+                    />
+                    <button
+                      type="button"
+                      onClick={applyCoupon}
+                      disabled={couponLoading}
+                      className="shrink-0 rounded-lg border border-forest-700 px-3 text-sm font-medium text-forest-700 disabled:opacity-50"
+                    >
+                      {couponLoading ? "Validando..." : "Aplicar"}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center justify-between rounded-lg bg-forest-50 px-3 py-2 text-sm">
+                    <span className="text-forest-700">
+                      Desconto ({appliedCoupon.code}): -{formatBRL(appliedCoupon.discountAmount)}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={removeCoupon}
+                      className="text-xs text-ink/50 underline"
+                    >
+                      Remover
+                    </button>
+                  </div>
+                )}
+                {couponError && <p className="mt-1 text-xs text-red-600">{couponError}</p>}
+              </div>
+
               <div className="flex justify-between pt-2 font-semibold">
                 <span>Total</span>
-                <span>{formatBRL(pricing.total)}</span>
+                <span>{formatBRL(finalTotal)}</span>
               </div>
               {pricing.nightsCount < pricing.minNightsRequired && (
                 <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-700">
@@ -211,6 +307,17 @@ export default function BookingWidget({
 
       {step === "dados" && (
         <div className="mt-4 space-y-3">
+          <div className="flex justify-between rounded-lg bg-forest-50 px-3 py-2 text-sm font-medium">
+            <span>Total a pagar</span>
+            <span>
+              {formatBRL(finalTotal)}
+              {appliedCoupon && (
+                <span className="ml-1 text-xs font-normal text-forest-700">
+                  (cupom {appliedCoupon.code} aplicado)
+                </span>
+              )}
+            </span>
+          </div>
           <p className="text-sm text-ink/70">
             Informe seus dados para prosseguir com a reserva e pagamento seguro.
           </p>
