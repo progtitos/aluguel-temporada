@@ -127,8 +127,9 @@ export default function AdminPropertyEditor({
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(form),
     });
+    const data = await res.json().catch(() => ({}));
     setSaving(false);
-    setMessage(res.ok ? "Alterações salvas." : "Erro ao salvar.");
+    setMessage(res.ok ? "Alterações salvas." : data.error ?? "Erro ao salvar.");
   }
 
   async function handleGeocode() {

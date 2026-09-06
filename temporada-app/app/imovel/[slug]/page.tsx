@@ -1,11 +1,12 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { ArrowLeft, MapPin, Users, Clock } from "lucide-react";
+import { ArrowLeft, MapPin, Users, Clock, CircleCheck } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 import PropertyGallery from "@/components/PropertyGallery";
 import BookingWidget from "@/components/BookingWidget";
 import PropertyMap from "@/components/PropertyMap";
 import { AMENITY_OPTIONS } from "@/lib/amenities";
+import { parseBulletedText } from "@/lib/textBlocks";
 
 export const revalidate = 0;
 
@@ -30,6 +31,7 @@ export default async function PropertyPage({ params }: { params: { slug: string 
   ]);
 
   const selectedAmenities = AMENITY_OPTIONS.filter((a) => property.amenities?.includes(a.key));
+  const ruleBlocks = parseBulletedText(property.house_rules);
 
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
@@ -97,12 +99,31 @@ export default async function PropertyPage({ params }: { params: { slug: string 
 
           <section>
             <h2 className="font-display text-xl font-semibold text-ink">Regras da casa</h2>
-            <p className="mt-2 whitespace-pre-line text-ink/70">{property.house_rules}</p>
+            <div className="mt-2 space-y-3">
+              {ruleBlocks.map((block, i) =>
+                block.type === "list" ? (
+                  <ul key={i} className="space-y-2">
+                    {block.items.map((item, j) => (
+                      <li key={j} className="flex items-start gap-2 text-ink/70">
+                        <CircleCheck size={16} className="mt-0.5 shrink-0 text-forest-500" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p key={i} className="text-ink/70">
+                    {block.text}
+                  </p>
+                )
+              )}
+            </div>
           </section>
 
           <section>
             <h2 className="font-display text-xl font-semibold text-ink">Localização</h2>
-            <p className="mt-2 text-ink/70">{property.address_full ?? property.address_approx}</p>
+            <p className="mt-2 text-sm text-ink/50">
+              Localização exata enviada após a confirmação da reserva.
+            </p>
             <PropertyMap
               latitude={property.latitude}
               longitude={property.longitude}
