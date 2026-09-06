@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { Ticket, Plus, Trash2, Power } from "lucide-react";
 import { formatBRL, formatDate } from "@/lib/utils";
 import type { Coupon } from "@/types/database";
 
@@ -83,7 +84,10 @@ export default function AdminCouponsManager({ initialCoupons }: { initialCoupons
 
   return (
     <div className="max-w-3xl space-y-8">
-      <h1 className="font-display text-2xl font-semibold text-ink">Cupons de desconto</h1>
+      <h1 className="flex items-center gap-2 font-display text-2xl font-semibold text-ink">
+        <Ticket size={22} className="text-amber-500" />
+        Cupons de desconto
+      </h1>
       {message && <p className="text-sm text-forest-700">{message}</p>}
 
       {/* Criação */}
@@ -158,8 +162,9 @@ export default function AdminCouponsManager({ initialCoupons }: { initialCoupons
         <button
           onClick={createCoupon}
           disabled={saving}
-          className="mt-4 rounded-full bg-forest-700 px-5 py-2 text-sm font-medium text-white disabled:opacity-60"
+          className="mt-4 flex items-center gap-1.5 rounded-full bg-forest-700 px-5 py-2 text-sm font-medium text-white disabled:opacity-60"
         >
+          <Plus size={14} />
           {saving ? "Criando..." : "Criar cupom"}
         </button>
       </section>
@@ -212,14 +217,16 @@ export default function AdminCouponsManager({ initialCoupons }: { initialCoupons
                     <div className="flex gap-3">
                       <button
                         onClick={() => toggleActive(c)}
-                        className="text-xs font-medium text-forest-700 hover:underline"
+                        className="flex items-center gap-1 text-xs font-medium text-forest-700 hover:underline"
                       >
+                        <Power size={12} />
                         {c.is_active ? "Desativar" : "Ativar"}
                       </button>
                       <button
                         onClick={() => removeCoupon(c.id)}
-                        className="text-xs font-medium text-red-600 hover:underline"
+                        className="flex items-center gap-1 text-xs font-medium text-red-600 hover:underline"
                       >
+                        <Trash2 size={12} />
                         Excluir
                       </button>
                     </div>

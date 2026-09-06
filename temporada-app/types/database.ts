@@ -24,6 +24,7 @@ export type Property = {
   checkout_time: string;
   max_guests: number;
   photos: string[];
+  amenities: string[];
   is_active: boolean;
   created_at: string;
 };

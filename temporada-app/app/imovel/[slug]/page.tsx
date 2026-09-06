@@ -1,9 +1,11 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
+import { ArrowLeft, MapPin, Users, Clock } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
-import Carousel from "@/components/Carousel";
+import PropertyGallery from "@/components/PropertyGallery";
 import BookingWidget from "@/components/BookingWidget";
 import PropertyMap from "@/components/PropertyMap";
+import { AMENITY_OPTIONS } from "@/lib/amenities";
 
 export const revalidate = 0;
 
@@ -27,19 +29,28 @@ export default async function PropertyPage({ params }: { params: { slug: string 
     supabase.from("pricing_rules").select("*").eq("property_id", property.id),
   ]);
 
+  const selectedAmenities = AMENITY_OPTIONS.filter((a) => property.amenities?.includes(a.key));
+
   return (
     <main className="mx-auto max-w-5xl px-4 py-6 sm:px-6">
-      <Link href="/" className="text-sm text-ink/50 hover:text-ink">
-        ← Voltar
+      <Link href="/" className="flex items-center gap-1.5 text-sm text-ink/50 hover:text-ink">
+        <ArrowLeft size={14} /> Voltar
       </Link>
 
-      <h1 className="mt-2 font-display text-3xl font-semibold text-ink">
-        {property.name}
-      </h1>
-      <p className="mt-1 text-ink/60">{property.address_approx}</p>
+      <h1 className="mt-2 font-display text-3xl font-semibold text-ink">{property.name}</h1>
+      <div className="mt-1 flex items-center gap-4 text-sm text-ink/60">
+        {property.address_approx && (
+          <span className="flex items-center gap-1">
+            <MapPin size={14} /> {property.address_approx}
+          </span>
+        )}
+        <span className="flex items-center gap-1">
+          <Users size={14} /> até {property.max_guests} hóspedes
+        </span>
+      </div>
 
       <div className="mt-4">
-        <Carousel photos={property.photos ?? []} alt={property.name} />
+        <PropertyGallery photos={property.photos ?? []} alt={property.name} />
       </div>
 
       <div className="mt-8 grid grid-cols-1 gap-8 lg:grid-cols-3">
@@ -49,16 +60,37 @@ export default async function PropertyPage({ params }: { params: { slug: string 
             <p className="mt-2 whitespace-pre-line text-ink/70">{property.description}</p>
           </section>
 
+          {selectedAmenities.length > 0 && (
+            <section>
+              <h2 className="font-display text-xl font-semibold text-ink">Comodidades</h2>
+              <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
+                {selectedAmenities.map((a) => {
+                  const Icon = a.icon;
+                  return (
+                    <span key={a.key} className="flex items-center gap-2 text-sm text-ink/70">
+                      <Icon size={17} className="text-forest-500" strokeWidth={2} />
+                      {a.label}
+                    </span>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
           <section>
             <h2 className="font-display text-xl font-semibold text-ink">Check-in e check-out</h2>
-            <div className="mt-2 flex gap-6 text-ink/70">
+            <div className="mt-3 flex gap-8">
               <div>
                 <p className="text-xs uppercase tracking-wide text-ink/40">Check-in a partir de</p>
-                <p className="text-lg font-medium text-ink">{property.checkin_time}</p>
+                <p className="mt-1 flex items-center gap-1.5 text-lg font-medium text-ink">
+                  <Clock size={16} className="text-forest-500" /> {property.checkin_time}
+                </p>
               </div>
               <div>
                 <p className="text-xs uppercase tracking-wide text-ink/40">Check-out até</p>
-                <p className="text-lg font-medium text-ink">{property.checkout_time}</p>
+                <p className="mt-1 flex items-center gap-1.5 text-lg font-medium text-ink">
+                  <Clock size={16} className="text-forest-500" /> {property.checkout_time}
+                </p>
               </div>
             </div>
           </section>
@@ -70,9 +102,7 @@ export default async function PropertyPage({ params }: { params: { slug: string 
 
           <section>
             <h2 className="font-display text-xl font-semibold text-ink">Localização</h2>
-            <p className="mt-2 text-ink/70">
-              {property.address_full ?? property.address_approx}
-            </p>
+            <p className="mt-2 text-ink/70">{property.address_full ?? property.address_approx}</p>
             <PropertyMap
               latitude={property.latitude}
               longitude={property.longitude}

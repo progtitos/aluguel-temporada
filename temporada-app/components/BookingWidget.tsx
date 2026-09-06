@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type CSSProperties } from "react";
 import { DayPicker, type DateRange, type Matcher } from "react-day-picker";
 import "react-day-picker/style.css";
+import { User, Mail, Phone, IdCard, Tag, Lock, CalendarClock } from "lucide-react";
 import { ptBR } from "@/lib/dateLocale";
 import { calculatePricing, rateSourceLabel } from "@/lib/pricing";
 import { maskWhatsApp, isValidBrazilianPhone } from "@/lib/phoneMask";
@@ -20,6 +21,10 @@ const calendarStyle: CSSProperties = {
   ["--rdp-day_button-width" as string]: "clamp(1.9rem, 8vw, 2.5rem)",
   ["--rdp-day_button-height" as string]: "clamp(1.9rem, 8vw, 2.5rem)",
 };
+
+const fieldInputClass =
+  "mt-1 w-full rounded-lg border border-forest-100 py-2 pl-9 pr-3 text-sm focus:border-forest-400 focus:outline-none";
+const fieldIconClass = "pointer-events-none absolute left-3 top-[calc(50%+2px)] -translate-y-1/2 text-ink/30";
 
 export default function BookingWidget({
   property,
@@ -71,9 +76,6 @@ export default function BookingWidget({
 
   const finalTotal = pricing ? pricing.total - (appliedCoupon?.discountAmount ?? 0) : 0;
 
-  // Se o hóspede mudar as datas depois de aplicar um cupom, o desconto
-  // calculado (que depende do total/noites) fica desatualizado — melhor
-  // pedir para reaplicar do que arriscar mostrar um valor incorreto.
   useEffect(() => {
     setAppliedCoupon(null);
     setCouponError(null);
@@ -162,7 +164,7 @@ export default function BookingWidget({
           property_id: property.id,
           check_in: toISODate(range.from),
           check_out: toISODate(range.to),
-          method: "pix", // O Mercado Pago gerenciará a escolha final no Checkout Pro
+          method: "pix",
           full_name: fullName.trim(),
           email: email.trim(),
           whatsapp,
@@ -174,7 +176,6 @@ export default function BookingWidget({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error ?? "Não foi possível criar a reserva.");
 
-      // Redireciona o hóspede diretamente para o Mercado Pago
       if (data.init_point) {
         window.location.href = data.init_point;
         return;
@@ -200,7 +201,8 @@ export default function BookingWidget({
         </p>
       )}
       {windowEnd && (
-        <p className="mt-1 text-xs text-ink/40">
+        <p className="mt-1 flex items-center gap-1 text-xs text-ink/40">
+          <CalendarClock size={12} />
           Reservas disponíveis até {formatDate(toISODate(windowEnd))}
         </p>
       )}
@@ -244,17 +246,19 @@ export default function BookingWidget({
                 <span>{formatBRL(pricing.cleaningFee)}</span>
               </div>
 
-              {/* Cupom de desconto */}
               <div className="border-t border-forest-100 pt-3">
                 {!appliedCoupon ? (
                   <div className="flex gap-2">
-                    <input
-                      className="min-w-0 flex-1 rounded-lg border border-forest-100 p-2 text-sm uppercase"
-                      placeholder="Código do cupom"
-                      value={couponInput}
-                      onChange={(e) => setCouponInput(e.target.value)}
-                      onKeyDown={(e) => e.key === "Enter" && applyCoupon()}
-                    />
+                    <div className="relative min-w-0 flex-1">
+                      <Tag size={14} className={fieldIconClass} />
+                      <input
+                        className="w-full rounded-lg border border-forest-100 py-2 pl-8 pr-3 text-sm uppercase focus:border-forest-400 focus:outline-none"
+                        placeholder="Código do cupom"
+                        value={couponInput}
+                        onChange={(e) => setCouponInput(e.target.value)}
+                        onKeyDown={(e) => e.key === "Enter" && applyCoupon()}
+                      />
+                    </div>
                     <button
                       type="button"
                       onClick={applyCoupon}
@@ -266,14 +270,11 @@ export default function BookingWidget({
                   </div>
                 ) : (
                   <div className="flex items-center justify-between rounded-lg bg-forest-50 px-3 py-2 text-sm">
-                    <span className="text-forest-700">
+                    <span className="flex items-center gap-1.5 text-forest-700">
+                      <Tag size={14} />
                       Desconto ({appliedCoupon.code}): -{formatBRL(appliedCoupon.discountAmount)}
                     </span>
-                    <button
-                      type="button"
-                      onClick={removeCoupon}
-                      className="text-xs text-ink/50 underline"
-                    >
+                    <button type="button" onClick={removeCoupon} className="text-xs text-ink/50 underline">
                       Remover
                     </button>
                   </div>
@@ -321,46 +322,62 @@ export default function BookingWidget({
           <p className="text-sm text-ink/70">
             Informe seus dados para prosseguir com a reserva e pagamento seguro.
           </p>
+
           <label className="block text-sm">
             Nome completo
-            <input
-              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              placeholder="Seu nome completo"
-              autoComplete="name"
-            />
+            <div className="relative">
+              <User size={15} className={fieldIconClass} />
+              <input
+                className={fieldInputClass}
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="Seu nome completo"
+                autoComplete="name"
+              />
+            </div>
           </label>
+
           <label className="block text-sm">
             E-mail
-            <input
-              type="email"
-              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              placeholder="voce@email.com"
-              autoComplete="email"
-            />
+            <div className="relative">
+              <Mail size={15} className={fieldIconClass} />
+              <input
+                type="email"
+                className={fieldInputClass}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="voce@email.com"
+                autoComplete="email"
+              />
+            </div>
           </label>
+
           <label className="block text-sm">
             WhatsApp
-            <input
-              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
-              value={whatsapp}
-              onChange={(e) => setWhatsapp(maskWhatsApp(e.target.value))}
-              placeholder="(11) 99999-9999"
-              inputMode="tel"
-            />
+            <div className="relative">
+              <Phone size={15} className={fieldIconClass} />
+              <input
+                className={fieldInputClass}
+                value={whatsapp}
+                onChange={(e) => setWhatsapp(maskWhatsApp(e.target.value))}
+                placeholder="(11) 99999-9999"
+                inputMode="tel"
+              />
+            </div>
           </label>
+
           <label className="block text-sm">
             CPF
-            <input
-              className="mt-1 w-full rounded-lg border border-forest-100 p-2"
-              value={cpf}
-              onChange={(e) => setCpf(maskCPF(e.target.value))}
-              placeholder="000.000.000-00"
-              inputMode="numeric"
-            />
+            <div className="relative">
+              <IdCard size={15} className={fieldIconClass} />
+              <input
+                className={fieldInputClass}
+                value={cpf}
+                onChange={(e) => setCpf(maskCPF(e.target.value))}
+                placeholder="000.000.000-00"
+                inputMode="numeric"
+              />
+            </div>
           </label>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
@@ -372,6 +389,9 @@ export default function BookingWidget({
           >
             {loading ? "Redirecionando para o pagamento..." : "Ir para o pagamento"}
           </button>
+          <p className="flex items-center justify-center gap-1 text-center text-xs text-ink/40">
+            <Lock size={11} /> Pagamento seguro via Mercado Pago
+          </p>
           <button
             onClick={() => setStep("datas")}
             className="w-full text-center text-xs text-ink/50 underline"

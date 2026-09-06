@@ -14,9 +14,9 @@ export default async function DashboardLayout({ children }: { children: React.Re
 
   return (
     <AdminPropertiesProvider initialProperties={properties ?? []}>
-      <div className="flex min-h-screen flex-col sm:flex-row">
+      <div className="flex min-h-screen flex-col bg-forest-50 sm:flex-row">
         <AdminSidebar />
-        <div className="flex-1 p-4 sm:p-8">{children}</div>
+        <div className="min-w-0 flex-1 p-4 sm:p-8">{children}</div>
       </div>
     </AdminPropertiesProvider>
   );

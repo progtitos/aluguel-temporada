@@ -1,4 +1,4 @@
-import LoginButtons from "@/components/LoginButtons";
+import AdminLoginForm from "@/components/AdminLoginForm";
 
 export default function AdminLoginPage() {
   return (
@@ -7,9 +7,9 @@ export default function AdminLoginPage() {
         Painel administrativo
       </h1>
       <p className="mb-6 text-center text-sm text-ink/60">
-        Entre com a conta autorizada para gerenciar as acomodações.
+        Entre com seu e-mail e senha para gerenciar as acomodações.
       </p>
-      <LoginButtons redirectTo="/auth/callback?next=/admin" />
+      <AdminLoginForm />
     </main>
   );
 }

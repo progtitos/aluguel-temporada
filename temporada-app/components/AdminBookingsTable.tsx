@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { formatBRL, formatDate } from "@/lib/utils";
 import { maskWhatsApp, whatsAppLink } from "@/lib/phoneMask";
@@ -8,6 +8,7 @@ import type { BookingStatus } from "@/types/database";
 
 export type BookingRow = {
   id: string;
+  property_id: string;
   property_name: string;
   guest_name: string | null;
   guest_email: string | null;
@@ -25,10 +26,22 @@ const statusStyles: Record<BookingStatus, string> = {
   bloqueio: "bg-ink/10 text-ink/60",
 };
 
-export default function AdminBookingsTable({ bookings }: { bookings: BookingRow[] }) {
+export default function AdminBookingsTable({
+  bookings,
+  properties,
+}: {
+  bookings: BookingRow[];
+  properties: { id: string; name: string }[];
+}) {
   const router = useRouter();
   const [rows, setRows] = useState(bookings);
   const [cancelingId, setCancelingId] = useState<string | null>(null);
+  const [propertyFilter, setPropertyFilter] = useState<string>("all");
+
+  const filteredRows = useMemo(
+    () => (propertyFilter === "all" ? rows : rows.filter((r) => r.property_id === propertyFilter)),
+    [rows, propertyFilter]
+  );
 
   async function cancelBooking(id: string) {
     const confirmed = window.confirm(
@@ -50,73 +63,88 @@ export default function AdminBookingsTable({ bookings }: { bookings: BookingRow[
   }
 
   return (
-    <div className="overflow-x-auto rounded-xl2 bg-white shadow-soft ring-1 ring-forest-100">
-      <table className="w-full text-left text-sm">
-        <thead className="bg-forest-50 text-ink/50">
-          <tr>
-            <th className="px-4 py-3">Imóvel</th>
-            <th className="px-4 py-3">Hóspede</th>
-            <th className="px-4 py-3">WhatsApp</th>
-            <th className="px-4 py-3">Datas</th>
-            <th className="px-4 py-3">Valor</th>
-            <th className="px-4 py-3">Status</th>
-            <th className="px-4 py-3">Ações</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((b) => (
-            <tr key={b.id} className="border-t border-forest-100">
-              <td className="px-4 py-3">{b.property_name}</td>
-              <td className="px-4 py-3">{b.guest_name ?? b.guest_email ?? "—"}</td>
-              <td className="px-4 py-3">
-                {b.guest_phone ? (
-                  <a
-                    href={whatsAppLink(b.guest_phone)}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="text-forest-700 hover:underline"
-                  >
-                    {maskWhatsApp(b.guest_phone)}
-                  </a>
-                ) : (
-                  <span className="text-ink/30">—</span>
-                )}
-              </td>
-              <td className="px-4 py-3 whitespace-nowrap">
-                {formatDate(b.check_in)} → {formatDate(b.check_out)}
-              </td>
-              <td className="px-4 py-3">{formatBRL(b.total_amount)}</td>
-              <td className="px-4 py-3">
-                <span
-                  className={`rounded-full px-2 py-1 text-xs font-medium ${statusStyles[b.status]}`}
-                >
-                  {b.status}
-                </span>
-              </td>
-              <td className="px-4 py-3">
-                {b.status === "pendente" ? (
-                  <button
-                    onClick={() => cancelBooking(b.id)}
-                    disabled={cancelingId === b.id}
-                    className="rounded-full border border-red-200 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-                  >
-                    {cancelingId === b.id ? "Cancelando..." : "Cancelar"}
-                  </button>
-                ) : (
-                  <span className="text-ink/20">—</span>
-                )}
-              </td>
-            </tr>
+    <div className="rounded-xl2 bg-white shadow-soft ring-1 ring-forest-100">
+      <div className="flex items-center justify-between border-b border-forest-100 p-4">
+        <h2 className="font-display text-base font-semibold text-ink">Últimas reservas</h2>
+        <select
+          className="h-8 rounded-lg border border-forest-100 bg-white px-2 text-xs"
+          value={propertyFilter}
+          onChange={(e) => setPropertyFilter(e.target.value)}
+        >
+          <option value="all">Todos os imóveis</option>
+          {properties.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
           ))}
-          {rows.length === 0 && (
+        </select>
+      </div>
+      <div className="overflow-x-auto">
+        <table className="w-full text-left text-sm">
+          <thead className="bg-forest-50 text-ink/50">
             <tr>
-              <td colSpan={7} className="px-4 py-6 text-center text-ink/40">
-                Nenhuma reserva ainda.
-              </td>
+              <th className="px-4 py-3">Imóvel</th>
+              <th className="px-4 py-3">Hóspede</th>
+              <th className="px-4 py-3">WhatsApp</th>
+              <th className="px-4 py-3">Datas</th>
+              <th className="px-4 py-3">Valor</th>
+              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">Ações</th>
             </tr>
-          )}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {filteredRows.map((b) => (
+              <tr key={b.id} className="border-t border-forest-100">
+                <td className="px-4 py-3">{b.property_name}</td>
+                <td className="px-4 py-3">{b.guest_name ?? b.guest_email ?? "—"}</td>
+                <td className="px-4 py-3">
+                  {b.guest_phone ? (
+                    <a
+                      href={whatsAppLink(b.guest_phone)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-forest-700 hover:underline"
+                    >
+                      {maskWhatsApp(b.guest_phone)}
+                    </a>
+                  ) : (
+                    <span className="text-ink/30">—</span>
+                  )}
+                </td>
+                <td className="whitespace-nowrap px-4 py-3">
+                  {formatDate(b.check_in)} → {formatDate(b.check_out)}
+                </td>
+                <td className="px-4 py-3">{formatBRL(b.total_amount)}</td>
+                <td className="px-4 py-3">
+                  <span className={`rounded-full px-2 py-1 text-xs font-medium ${statusStyles[b.status]}`}>
+                    {b.status}
+                  </span>
+                </td>
+                <td className="px-4 py-3">
+                  {b.status === "pendente" ? (
+                    <button
+                      onClick={() => cancelBooking(b.id)}
+                      disabled={cancelingId === b.id}
+                      className="rounded-full border border-red-200 px-3 py-1 text-xs font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
+                    >
+                      {cancelingId === b.id ? "Cancelando..." : "Cancelar"}
+                    </button>
+                  ) : (
+                    <span className="text-ink/20">—</span>
+                  )}
+                </td>
+              </tr>
+            ))}
+            {filteredRows.length === 0 && (
+              <tr>
+                <td colSpan={7} className="px-4 py-6 text-center text-ink/40">
+                  Nenhuma reserva para este filtro.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

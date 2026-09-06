@@ -29,6 +29,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     "max_guests",
     "is_active",
     "photos",
+    "amenities",
   ] as const;
 
   const update: Partial<Property> = {};
@@ -41,6 +42,13 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     (!Array.isArray(update.photos) || update.photos.some((p) => typeof p !== "string"))
   ) {
     return NextResponse.json({ error: "Lista de fotos inválida." }, { status: 400 });
+  }
+
+  if (
+    "amenities" in update &&
+    (!Array.isArray(update.amenities) || update.amenities.some((a) => typeof a !== "string"))
+  ) {
+    return NextResponse.json({ error: "Lista de comodidades inválida." }, { status: 400 });
   }
 
   const admin = createAdminClient();
