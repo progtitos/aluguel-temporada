@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/server";
 import { mpPayment } from "@/lib/mercadopago";
+import { sendBookingConfirmationEmail } from "@/lib/email";
 
 // O Mercado Pago chama esta rota sempre que o status de um pagamento muda.
 // Nunca confie no client para "confirmar" uma reserva — a confirmação
@@ -37,7 +38,38 @@ export async function POST(request: Request) {
       .eq("booking_id", bookingId);
 
     if (mpStatus === "approved") {
-      await admin.from("bookings").update({ status: "confirmada" }).eq("id", bookingId);
+      const { data: booking } = await admin
+        .from("bookings")
+        .update({ status: "confirmada" })
+        .eq("id", bookingId)
+        .select()
+        .single();
+
+      // E-mail é "melhor esforço": se falhar, não desfaz a confirmação
+      // (que já está garantida acima) nem impede o Mercado Pago de
+      // considerar o webhook como recebido com sucesso.
+      if (booking?.guest_email) {
+        const { data: property } = await admin
+          .from("properties")
+          .select("name, address_full, checkin_time, checkout_time, house_rules")
+          .eq("id", booking.property_id)
+          .single();
+
+        if (property) {
+          await sendBookingConfirmationEmail({
+            guestName: booking.guest_name ?? "hóspede",
+            guestEmail: booking.guest_email,
+            propertyName: property.name,
+            addressFull: property.address_full,
+            checkIn: booking.check_in,
+            checkOut: booking.check_out,
+            checkinTime: property.checkin_time,
+            checkoutTime: property.checkout_time,
+            totalAmount: Number(booking.total_amount),
+            houseRules: property.house_rules,
+          });
+        }
+      }
     } else if (mpStatus === "rejected" || mpStatus === "cancelled") {
       await admin.from("bookings").update({ status: "cancelada" }).eq("id", bookingId);
     }

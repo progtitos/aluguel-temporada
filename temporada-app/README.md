@@ -25,7 +25,7 @@ app/
   api/
     bookings/route.ts                  Checkout sem login: valida tudo, recalcula preço e cria o pagamento
     coupons/validate/route.ts          Valida cupom e calcula desconto (sem consumir)
-    mercadopago/webhook/route.ts       Confirma reserva após pagamento
+    mercadopago/webhook/route.ts       Confirma reserva após pagamento + dispara e-mail de confirmação
     admin/
       properties/[id]/route.ts         Edita dados do imóvel (slug, ordem de fotos, comodidades)
       properties/[id]/photos/route.ts  Upload múltiplo + remoção de fotos
@@ -53,6 +53,7 @@ lib/
   availability.ts                      Janela de disponibilidade do calendário (1/2/3 meses ou sem limite)
   mercadopago.ts                       Integração Pix + Cartão (payload completo do payer)
   siteUrl.ts                           Só monta notification_url/back_urls com HTTPS válido
+  email.ts                             E-mail de confirmação após pagamento aprovado (Resend)
   phoneMask.ts, cpfMask.ts, slug.ts, geocoding.ts, dateLocale.ts
   supabase/                            Clientes browser/server/admin + middleware
 supabase/                              SQL: schema, RLS, storage, seed, migrations 05-10

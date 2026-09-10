@@ -80,6 +80,18 @@ O botão "Buscar coordenadas pelo endereço" no editor de cada imóvel usa a API
 
 ---
 
+## 2.6 E-mail de confirmação (Resend)
+
+O Mercado Pago **não envia** nenhum e-mail com os detalhes da reserva para o hóspede — só o recibo genérico da própria conta MP dele, se tiver uma. Por isso, assim que o webhook confirma o pagamento, o app dispara um e-mail de confirmação (com imóvel, datas, endereço exato e regras da casa) via [Resend](https://resend.com).
+
+1. Crie uma conta em [resend.com](https://resend.com) (plano gratuito: 3.000 e-mails/mês, 100/dia — mais do que suficiente para uma pousada pequena).
+2. Em **API Keys**, crie uma chave e copie para a variável `RESEND_API_KEY`.
+3. **Sem domínio próprio ainda?** Pode testar direto: sem configurar `EMAIL_FROM`, o app usa o remetente de teste `onboarding@resend.dev` do próprio Resend — funciona, mas tem mais chance de cair em spam.
+4. **Com domínio próprio**: em **Domains**, adicione seu domínio e siga as instruções para criar os registros DNS (SPF/DKIM) apontados pelo Resend. Depois de verificado, defina `EMAIL_FROM="Sua Pousada <reservas@seudominio.com>"`.
+5. Se `RESEND_API_KEY` não estiver configurada, o app simplesmente não envia o e-mail (não quebra a confirmação da reserva, que já acontece antes do envio).
+
+---
+
 ## 3. Deploy na Vercel
 
 1. Suba o código para um repositório no GitHub.
@@ -91,6 +103,8 @@ O botão "Buscar coordenadas pelo endereço" no editor de cada imóvel usa a API
    - `ADMIN_EMAILS` (o(s) e-mail(s) que você cadastrou como usuário no Supabase — ver seção 1.4)
    - `MP_ACCESS_TOKEN`
    - `NEXT_PUBLIC_SITE_URL` (depois do primeiro deploy, atualize com a URL final da Vercel e faça um redeploy)
+   - `RESEND_API_KEY` (e-mail de confirmação — ver seção 2.6)
+   - `EMAIL_FROM` (opcional, ver seção 2.6)
 4. Clique em **Deploy**.
 5. Depois do primeiro deploy, volte no Mercado Pago (passo 2.2) e confirme que as URLs usam o domínio final da Vercel.
 
@@ -128,6 +142,7 @@ Qualquer e-mail que não esteja em `ADMIN_EMAILS` é redirecionado de volta para
 3. Escolhe Pix ou Cartão → `POST /api/bookings` valida tudo no servidor (estadia mínima, janela de disponibilidade, formato de e-mail/telefone/CPF, e o cupom de desconto — se informado, contra o registro mais atual em `coupons`), recalcula o preço a partir das tarifas cadastradas (nunca confia no valor do client), cria a reserva com status `pendente` (o banco impede overbooking via trigger) e gera o pagamento no Mercado Pago já com o desconto aplicado.
 4. Mercado Pago notifica `POST /api/mercadopago/webhook` quando o status do pagamento muda (apenas quando há uma URL pública HTTPS configurada — ver seção 2.4).
 5. O webhook consulta o pagamento **diretamente na API do Mercado Pago** (não confia no payload recebido) e só então marca a reserva como `confirmada`. Se um cupom foi aplicado, ele é consumido automaticamente neste momento (nunca antes, para não "queimar" cupons de reservas abandonadas).
+6. Com a reserva confirmada, o webhook dispara o e-mail de confirmação (`lib/email.ts`, via Resend) com os detalhes da estadia — incluindo o endereço exato, que só é revelado neste momento (a página pública mostra apenas o mapa).
 
 > O login (agora por e-mail/senha, sem OAuth) é usado **apenas** para você acessar o `/admin` — não faz parte do fluxo de reserva do hóspede.
 
