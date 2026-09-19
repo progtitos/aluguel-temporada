@@ -1,0 +1,25 @@
+name: Keep Supabase Awake
+
+# Roda a cada 3 dias às 09:00 UTC (06:00 no horário de Brasília), bem
+# dentro da janela de ~7 dias que o Supabase free tier tolera sem
+# atividade antes de pausar o projeto automaticamente.
+on:
+  schedule:
+    - cron: "0 9 */3 * *"
+  # Permite disparar manualmente pela aba "Actions" do GitHub, útil para
+  # testar sem esperar o próximo agendamento.
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Chamar o endpoint de health check
+        run: |
+          response=$(curl -s -o /tmp/body.txt -w "%{http_code}" https://temporada-lovat.vercel.app/api/health)
+          echo "HTTP status: $response"
+          cat /tmp/body.txt
+          if [ "$response" -ne 200 ]; then
+            echo "Health check falhou (status $response)"
+            exit 1
+          fi
